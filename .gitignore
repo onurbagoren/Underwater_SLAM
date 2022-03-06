@@ -1,1 +1,6 @@
 src/cirs_girona_cala_viuda/data
+devel/
+build/
+src/CMakeLists.txt
+.vscode
+.catkin_workspace

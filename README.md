@@ -23,8 +23,8 @@ source devel/setup.bash
 ```
 roslaunch cirs_girona_cala_ciuda play_data.launch
 ```
-- This should launch an RViz window that shows the robot, the robots odometry over time, and the sonar readings over time.
-
+- This should launch an RViz window that shows the robot, the robots odometry over time, and the sonar readings over time, as shown in the image below.
+![](images/RVIZ.png)
 
 ## Relevant Notes
 - In the `src/cirs_girona_cala_ciuda/launch/play_data.launch` file, you can find notes regarding which line to comment of uncomment, depending on your ROS distribution. This is not a major issue, as the visualization will work - but will get rid of the error message that may appear when launching the file.

@@ -28,3 +28,10 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
 
 ## Relevant Notes
 - In the `src/cirs_girona_cala_ciuda/launch/play_data.launch` file, you can find notes regarding which line to comment of uncomment, depending on your ROS distribution. This is not a major issue, as the visualization will work - but will get rid of the error message that may appear when launching the file.
+
+## Relevant Papers
+- Please make sure to read the following papers:
+    - https://link.springer.com/content/pdf/10.1007/s10514-013-9345-0.pdf
+    - https://journals.sagepub.com/doi/pdf/10.1177/0278364917732838
+    - https://onlinelibrary.wiley.com/doi/epdf/10.1002/rob.21640
+    

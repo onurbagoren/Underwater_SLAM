@@ -36,7 +36,7 @@ class State:
 
 class AUV_Robot(State):
     def __init__(self):
-        super().__init__(1, 1, 1, np.pi/2, 5, 10, 6, 0)
+        super().__init__(0, 0, 0, 0, 0, 0, 0, 0)
 
         DATA_DIR = f'{sys.path[0]}/../data/full_dataset/'
 
@@ -44,7 +44,7 @@ class AUV_Robot(State):
         self.Q = np.eye(8)
 
         # Measurement noise
-        self.R_dvl = np.eye(4)
+        self.R_dvl = np.eye(3)
         self.R_ahrs = np.eye(1)
         self.dt = 1
 
@@ -60,7 +60,9 @@ class AUV_Robot(State):
         self.depth_times = self.get_dept_times(DATA_DIR)
 
         # Load the data
-        self.dvl_data = self.get_dvl_data(DATA_DIR, 0)
+        self.dvl_data = self.get_dvl_data(DATA_DIR)
+        self.ahrs_data = self.get_ahrs_data(DATA_DIR)
+        self.depth_data = self.get_depth_data(DATA_DIR)
 
         self.initialize_filter()
 
@@ -92,7 +94,7 @@ class AUV_Robot(State):
         '''
         # Read odometry data
         depth_data = pd.read_csv(
-            data_dir + 'depth_sensor.txt', sep=' ', header=None)
+            data_dir + 'depth_sensor.txt', sep=',')
         # Get the fist column
         depth_times = np.array(depth_data.iloc[:, 0].values)
         return depth_times
@@ -121,7 +123,7 @@ class AUV_Robot(State):
             Path to the data directory
         idx : int
             Index of the file to load
-            
+
         Returns
         -------
         dvl_data : ndarray
@@ -153,7 +155,7 @@ class AUV_Robot(State):
         '''
         # Read odometry data
         depth_data = pd.read_csv(
-            data_dir + 'depth_sensor.txt', sep=' ', header=None)
+            data_dir + 'depth_sensor.txt', sep=',')
         # Get the fist column
         depth_data = np.array(depth_data['field.depth'].values)
         return depth_data
@@ -166,16 +168,16 @@ class AUV_Robot(State):
         ----------
         data_dir : str
             Path to the data directory
-            
+
         Returns
         -------
         ahrs_data : ndarray
-            AHRS data (9, N)
+            AHRS data (1, N)
         '''
         # Read odometry data
         ahrs_data = pd.read_csv(data_dir + 'imu_adis.txt', sep=',')
         # Get the fist column
-        ahrs_data = np.array(ahrs_data.iloc[:, 1].values)
+        ahrs_data = np.array(ahrs_data['field.yaw'].values)
         return ahrs_data
 
     ###########################################################################
@@ -242,18 +244,18 @@ class AUV_Robot(State):
         w_k = np.linalg.cholesky(self.R_ahrs) @ np.random.randn(1, 1)
         z_ahrs = H_ahrs @ self.X + w_k
 
-        return z_ahrs
+        return z_ahrs, H_ahrs
 
     def dvl_update_model(self):
-        H_dvl = np.zeros((4, 8))
+        H_dvl = np.zeros((3, 8))
         H_dvl[0, 4] = 1
         H_dvl[1, 5] = 1
         H_dvl[2, 6] = 1
 
-        w_k = np.linalg.cholesky(self.R) @ np.random.randn(4, 1)
+        w_k = np.linalg.cholesky(self.R_dvl) @ np.random.randn(3, 1)
         z_dvl = H_dvl @ self.X + w_k
 
-        return z_dvl
+        return z_dvl, H_dvl
 
     def depth_update_model(self):
         H_depth = np.zeros((1, 8))
@@ -262,36 +264,94 @@ class AUV_Robot(State):
         w_k = np.linalg.cholesky(self.R_ahrs) @ np.random.randn(1, 1)
         z_depth = H_depth @ self.X + w_k
 
-        return z_depth
+        return z_depth, H_depth
+
+    def wrap_to_pi(self, x):
+        '''
+        Wrap to pi
+        '''
+        return np.mod(x + np.pi, 2 * np.pi) - np.pi
 
     def run_filter(self):
         '''
         Run the filter
         '''
-        odom_idx = 1
+        self.eta, self.nu = self.motion_model()
+        cov = self.cov[0, :, :]
+        self.X = np.concatenate((self.eta, self.nu), axis=0)
+        J = self.motion_jacobian()
+        P = J @ cov @ J.T + self.Q
+
+        self.mean[1, :] = self.X.reshape(8,)
+        self.cov[1, :, :] = P
+
+        odom_idx = 2
         ahrs_idx = 0
         dvl_idx = 0
+        depth_idx = 0
         while odom_idx < self.num_steps:
             ahrs_time = self.ahrs_times[ahrs_idx]
             dvl_time = self.dvl_times[dvl_idx]
             odom_time = self.odometry_times[odom_idx]
-            if ahrs_time < odom_time and dvl_time < odom_time:
+            depth_time = self.depth_times[depth_idx]
+            # if True:# (ahrs_time > odom_time and dvl_time > odom_time) and:
                 # No data, so update the model by propagating the motion model
-                self.eta, self.nu = self.motion_model()
-                self.X = np.concatenate((self.eta, self.nu), axis=0)
-                P = self.motion_jacobian() @ self.cov[odom_idx - 1, :, :] @ \
-                    self.motion_jacobian().T + self.Q
-                self.mean[odom_idx, :] = self.X.reshape(8,)
-                self.cov[odom_idx, :, :] = P
-                odom_idx += 1
-            else:
-                if ahrs_time < odom_time:
-                    # Received ahrs data
-                    z_ahrs = self.ahrs_update_model()
+            self.eta, self.nu = self.motion_model()
+            cov = self.cov[odom_idx - 1, :, :]
+            self.X = np.concatenate((self.eta, self.nu), axis=0)
+            J = self.motion_jacobian()
+            P = J @ cov @ J.T + self.Q
+            self.mean[odom_idx, :] = self.X.reshape(8,)
+            self.cov[odom_idx, :, :] = P
+            odom_idx += 1
+            # else:
+            #     # if ahrs_time < odom_time:
+            #     #     # Received ahrs data
+            #     #     z_ahrs, H_ahrs = self.ahrs_update_model()
+                # #     ahrs_data = self.ahrs_data[ahrs_idx]
+                # #     innovation = z_ahrs - ahrs_data
+                # #     S = H_ahrs @ P @ H_ahrs.T + self.R_ahrs
+                # #     U = P @ H_ahrs.T
+                # #     U_T = U.T
+                # #     self.X = (self.X + U @ np.linalg.solve(S, innovation))
+                # #     # Wrat to pi
+                # #     self.X[3] = self.wrap_to_pi(self.X[3])
+                # #     P =- U @ np.linalg.solve(S, U_T)
+                # #     ahrs_idx += 1
 
-                if dvl_time < odom_time:
-                    # Received dvl data
-                    z_dvl = self.dvl_update_model()
+                # # if dvl_time < odom_time:
+                # #     # Received dvl data
+                # #     z_dvl, H_dvl = self.dvl_update_model()
+                # #     dvl_data = self.dvl_data[:, dvl_idx].reshape(3,1)
+                # #     innovation = z_dvl - dvl_data
+                # #     S = H_dvl @ P @ H_dvl.T + self.R_dvl
+                # #     U = P @ H_dvl.T
+                # #     U_T = U.T
+                # #     self.X = (self.X + U @ np.linalg.solve(S, innovation))
+                # #     # Wrat to pi
+                # #     self.X[3] = self.wrap_to_pi(self.X[3])
+                # #     P =- U @ np.linalg.solve(S, U_T)
+                # #     dvl_idx += 1
+
+                # if depth_time < odom_time:
+                #     depth_idx += 1
+                    
+                #     # Received depth data
+                #     # z_depth, H_depth = self.depth_update_model()
+                #     # depth_data = self.depth_data[depth_idx]
+                #     # innovation = z_depth - depth_data
+                #     # S = H_depth @ P @ H_depth.T + self.R_ahrs
+                #     # U = P @ H_depth.T
+                #     # U_T = U.T
+                #     # print(U @ np.linalg.solve(S, innovation))
+                #     # self.X = (self.X + U @ np.linalg.solve(S, innovation))
+                #     # # Wrat to pi
+                #     # self.X[3] = self.wrap_to_pi(self.X[3])
+                #     # P =- U @ np.linalg.solve(S, U_T)
+                #     # depth_idx += 1
+                
+                # self.mean[odom_idx, :] = self.X.reshape(8,)
+                # self.cov[odom_idx, :, :] = P
 
     def plot_mean(self):
         '''
@@ -299,8 +359,10 @@ class AUV_Robot(State):
         '''
         fig = plt.figure()
         ax = fig.add_subplot(111)
-        ax.plot(self.odometry_times, self.mean[:, 0], label='x')
-        ax.plot(self.odometry_times, self.mean[:, 3], label=r'$\psi$')
+        # ax.plot(self.odometry_times, self.mean[:, 0], label='x')
+        # ax.plot(self.odometry_times, self.mean[:, 1], label='y')
+        ax.plot(self.odometry_times, self.mean[:, 2], label='z')
+        # ax.plot(self.odometry_times, self.mean[:, 3], label=r'$\psi$')
         # ax = fig.add_subplot(111, projection='3d')
         # ax.plot(self.mean[:, 0], self.mean[:, 1], self.mean[:, 2])
         # ax.set_xlabel('x')
@@ -316,8 +378,8 @@ def main():
     '''
     # Initialize the robot
     robot = AUV_Robot()
-    # robot.run_filter()
-    # robot.plot_mean()
+    robot.run_filter()
+    robot.plot_mean()
 
 
 if __name__ == "__main__":

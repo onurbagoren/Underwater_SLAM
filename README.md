@@ -1,7 +1,7 @@
 # UW_SLAM
 ## Setting up ROS
 - If you have Ubuntu 20.04 or Debian Buster, you can install ROS by following the link:
-http://wiki.ros.org/noetic/Installation/Debian
+http://wiki.ros.org/noetic/Installation/
 - If you have Ubuntu 18.04 or Debian Buster, you can install ROS by following the link: http://wiki.ros.org/melodic/Installation
 
 ## Cloning this directory

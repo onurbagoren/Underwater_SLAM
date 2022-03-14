@@ -41,14 +41,16 @@ class AUV_Robot(State):
         DATA_DIR = f'{sys.path[0]}/../data/full_dataset/'
 
         # Process noise
-        self.Q = np.eye(8)
+        self.Q = 1e-2 * np.eye(8)
 
         # Measurement noise
         self.R_dvl = np.eye(3)
-        self.R_ahrs = np.eye(1)
+        self.R_ahrs = np.eye(1) * 1e-5
+        self.R_depth = np.eye(1) * 1e-5
         self.dt = 1
 
         self.num_steps = self.get_num_steps(DATA_DIR)
+        # self.num_steps = 100
 
         self.mean = np.zeros((self.num_steps, 8))
         self.cov = np.zeros((self.num_steps, 8, 8))
@@ -57,7 +59,7 @@ class AUV_Robot(State):
         self.odometry_times = self.get_odometry_times(DATA_DIR)
         self.ahrs_times = self.get_ahrs_times(DATA_DIR)
         self.dvl_times = self.get_dvl_times(DATA_DIR)
-        self.depth_times = self.get_dept_times(DATA_DIR)
+        self.depth_times = self.get_depth_times(DATA_DIR)
 
         # Load the data
         self.dvl_data = self.get_dvl_data(DATA_DIR)
@@ -88,7 +90,7 @@ class AUV_Robot(State):
         ahrs_times = np.array(ahrs_data.iloc[:, 0].values)
         return ahrs_times
 
-    def get_dept_times(self, data_dir):
+    def get_depth_times(self, data_dir):
         '''
         Read a file
         '''
@@ -206,6 +208,7 @@ class AUV_Robot(State):
         '''
         Constant velocity motion model to propogate the state, discrete time
         '''
+        # Get the state
         R = np.eye(4)
         R[0:3, 0:3] = np.array([[np.cos(self.phi), -np.sin(self.phi), 0],
                                 [np.sin(self.phi), np.cos(self.phi), 0],
@@ -214,7 +217,8 @@ class AUV_Robot(State):
         nk = np.linalg.cholesky(self.Q[:4, :4]) @ np.random.randn(4, 1)
         eta = self.eta + R @ (self.nu * self.dt + nk * self.dt ** 2 / 2)
         nu = self.nu + nk * self.dt
-        return eta, nu
+        X = np.concatenate((eta, nu),axis = 0)
+        return X
 
     def motion_jacobian(self):
         '''
@@ -252,6 +256,8 @@ class AUV_Robot(State):
         H_dvl[1, 5] = 1
         H_dvl[2, 6] = 1
 
+        print(H_dvl)
+
         w_k = np.linalg.cholesky(self.R_dvl) @ np.random.randn(3, 1)
         z_dvl = H_dvl @ self.X + w_k
 
@@ -276,82 +282,58 @@ class AUV_Robot(State):
         '''
         Run the filter
         '''
-        self.eta, self.nu = self.motion_model()
-        cov = self.cov[0, :, :]
-        self.X = np.concatenate((self.eta, self.nu), axis=0)
+        pred_mean = self.motion_model()
+        initial_cov = self.cov[0, :, :]
         J = self.motion_jacobian()
-        P = J @ cov @ J.T + self.Q
+        pred_cov = J @ initial_cov @ J.T + self.Q
 
-        self.mean[1, :] = self.X.reshape(8,)
-        self.cov[1, :, :] = P
+        # self.mean[1, :] = pred_mean.reshape(8,)
+        # self.cov[1, :, :] = pred_cov
 
-        odom_idx = 2
+        odom_idx = 1
         ahrs_idx = 0
         dvl_idx = 0
         depth_idx = 0
         while odom_idx < self.num_steps:
-            ahrs_time = self.ahrs_times[ahrs_idx]
-            dvl_time = self.dvl_times[dvl_idx]
+            prev_mean = self.mean[odom_idx - 2, :]
+            # self.x = prev_mean[0]
+            # self.y = prev_mean[1]
+            # self.z = prev_mean[2]
+            # self.phi = prev_mean[3]
+            # self.u = prev_mean[4]
+            # self.v = prev_mean[5]
+            # self.w = prev_mean[6]
+            # self.r = prev_mean[7]
+            # self.eta = prev_mean[:4].reshape(4, 1)
+            # self.nu = prev_mean[4:].reshape(4, 1)
+            # ahrs_time = self.ahrs_times[ahrs_idx]
+            # dvl_time = self.dvl_times[dvl_idx]
             odom_time = self.odometry_times[odom_idx]
             depth_time = self.depth_times[depth_idx]
-            # if True:# (ahrs_time > odom_time and dvl_time > odom_time) and:
+            if depth_time > odom_time:# (ahrs_time > odom_time and dvl_time > odom_time) and:
                 # No data, so update the model by propagating the motion model
-            self.eta, self.nu = self.motion_model()
-            cov = self.cov[odom_idx - 1, :, :]
-            self.X = np.concatenate((self.eta, self.nu), axis=0)
-            J = self.motion_jacobian()
-            P = J @ cov @ J.T + self.Q
-            self.mean[odom_idx, :] = self.X.reshape(8,)
-            self.cov[odom_idx, :, :] = P
-            odom_idx += 1
-            # else:
-            #     # if ahrs_time < odom_time:
-            #     #     # Received ahrs data
-            #     #     z_ahrs, H_ahrs = self.ahrs_update_model()
-                # #     ahrs_data = self.ahrs_data[ahrs_idx]
-                # #     innovation = z_ahrs - ahrs_data
-                # #     S = H_ahrs @ P @ H_ahrs.T + self.R_ahrs
-                # #     U = P @ H_ahrs.T
-                # #     U_T = U.T
-                # #     self.X = (self.X + U @ np.linalg.solve(S, innovation))
-                # #     # Wrat to pi
-                # #     self.X[3] = self.wrap_to_pi(self.X[3])
-                # #     P =- U @ np.linalg.solve(S, U_T)
-                # #     ahrs_idx += 1
+                pred_mean = self.motion_model()
+                cov = self.cov[odom_idx - 1, :, :]
+                J = self.motion_jacobian()
+                pred_cov = J @ cov @ J.T + self.Q
+                odom_idx += 1
+                self.mean[odom_idx-1, :] = pred_mean.reshape(8,)
+                self.cov[odom_idx-1, :, :] = pred_cov
 
-                # # if dvl_time < odom_time:
-                # #     # Received dvl data
-                # #     z_dvl, H_dvl = self.dvl_update_model()
-                # #     dvl_data = self.dvl_data[:, dvl_idx].reshape(3,1)
-                # #     innovation = z_dvl - dvl_data
-                # #     S = H_dvl @ P @ H_dvl.T + self.R_dvl
-                # #     U = P @ H_dvl.T
-                # #     U_T = U.T
-                # #     self.X = (self.X + U @ np.linalg.solve(S, innovation))
-                # #     # Wrat to pi
-                # #     self.X[3] = self.wrap_to_pi(self.X[3])
-                # #     P =- U @ np.linalg.solve(S, U_T)
-                # #     dvl_idx += 1
-
-                # if depth_time < odom_time:
-                #     depth_idx += 1
-                    
-                #     # Received depth data
-                #     # z_depth, H_depth = self.depth_update_model()
-                #     # depth_data = self.depth_data[depth_idx]
-                #     # innovation = z_depth - depth_data
-                #     # S = H_depth @ P @ H_depth.T + self.R_ahrs
-                #     # U = P @ H_depth.T
-                #     # U_T = U.T
-                #     # print(U @ np.linalg.solve(S, innovation))
-                #     # self.X = (self.X + U @ np.linalg.solve(S, innovation))
-                #     # # Wrat to pi
-                #     # self.X[3] = self.wrap_to_pi(self.X[3])
-                #     # P =- U @ np.linalg.solve(S, U_T)
-                #     # depth_idx += 1
+            else:
+                if depth_time < odom_time:
+                    # Received depth data
+                    z_depth, H_depth = self.depth_update_model()
+                    depth_data = self.depth_data[depth_idx]
+                    nu = depth_data - z_depth
+                    S = H_depth @ pred_cov @ H_depth.T + self.R_depth
+                    K = pred_cov @ H_depth.T @ np.linalg.inv(S)
+                    pred_mean = pred_mean + K @ nu
+                    pred_cov = pred_cov - K @ H_depth @ pred_cov
+                    depth_idx += 1
                 
-                # self.mean[odom_idx, :] = self.X.reshape(8,)
-                # self.cov[odom_idx, :, :] = P
+                    self.mean[odom_idx, :] = pred_mean.reshape(8,)
+                    self.cov[odom_idx, :, :] = pred_cov
 
     def plot_mean(self):
         '''
@@ -359,15 +341,34 @@ class AUV_Robot(State):
         '''
         fig = plt.figure()
         ax = fig.add_subplot(111)
-        # ax.plot(self.odometry_times, self.mean[:, 0], label='x')
-        # ax.plot(self.odometry_times, self.mean[:, 1], label='y')
-        ax.plot(self.odometry_times, self.mean[:, 2], label='z')
+        # ax.plot(self.mean[:self.num_steps, 0], label='x')
+        # ax.plot(self.mean[:self.num_steps, 1], label='y')
+        ax.plot(self.mean[:self.num_steps, 2], label='z')
+        # ax.plot(self.mean[:self.num_steps, 3], label=r'$\psi$')
+
+        ax.plot(self.depth_data[:self.num_steps], label='depth data')
+
+        ax.legend()
+
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111)
+        # ax.plot(self.mean[:self.num_steps, 4], label='u')
+        # ax.plot(self.mean[:self.num_steps, 5], label='v')
+        # ax.plot(self.mean[:self.num_steps, 6], label='w')
+        # ax.plot(self.mean[:self.num_steps, 7], label='r')
         # ax.plot(self.odometry_times, self.mean[:, 3], label=r'$\psi$')
         # ax = fig.add_subplot(111, projection='3d')
         # ax.plot(self.mean[:, 0], self.mean[:, 1], self.mean[:, 2])
         # ax.set_xlabel('x')
         # ax.set_ylabel('y')
         # ax.set_zlabel('z')
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(self.mean[:, 0], self.mean[:, 1], self.mean[:, 2])
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
         plt.legend()
         plt.show()
 

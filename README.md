@@ -35,3 +35,5 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
     - https://journals.sagepub.com/doi/pdf/10.1177/0278364917732838
     - https://onlinelibrary.wiley.com/doi/epdf/10.1002/rob.21640
     
+## Plotting Sonar data
+![](images/sonar_viz.png)

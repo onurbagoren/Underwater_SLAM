@@ -2,6 +2,9 @@ from functools import partial
 from sre_parse import State
 from typing import List, Optional
 import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
+import sys
 
 import gtsam
 import numpy as np
@@ -135,11 +138,11 @@ def simulate_auv() -> np.ndarray:
     nu[:, 0] = nu0.reshape(6,)
 
     for i in range(1, num_steps):
-        n_k_eta = (np.eye(6) @ np.random.randn(6, 1)).reshape(6,)
-        rot_element = rot_mat(eta[:, i-1]) @ nu[:, i-1]
-        eta[:, i] = eta[:, i-1] + rot_element * dt + n_k_eta * dt ** 2 / 2
-        n_k_nu = (np.eye(6) @ np.random.randn(6, 1)).reshape(6,)
-        nu[:, i] = nu[:, i-1] + n_k_nu * dt
+        w_k_eta = (np.eye(6) @ np.random.randn(6, 1)).reshape(6,)
+        rot_element = rot_mat(eta[:, i-1])
+        eta[:, i] = eta[:, i-1] + rot_element @ (nu[:,i-1] * dt + w_k_eta * dt ** 2 / 2)
+        w_k_nu = (np.eye(6) @ np.random.randn(6, 1)).reshape(6,)
+        nu[:, i] = nu[:, i-1] + w_k_nu * dt
 
     state = np.vstack((eta, nu))
 
@@ -303,7 +306,7 @@ def auv_main():
         gps_factor = gtsam.CustomFactor(
             gps_model, [unknown[k], unknown[k], unknown[k], unknown[k], unknown[k], unknown[k]], partial(auv_error_gps, g[:, k]))
         graph.add(gps_factor)
-
+    # State vector
     v = gtsam.Values()
 
     for i in range(auv_traj.shape[1]):

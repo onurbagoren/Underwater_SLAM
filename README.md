@@ -35,3 +35,10 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
     - https://journals.sagepub.com/doi/pdf/10.1177/0278364917732838
     - https://onlinelibrary.wiley.com/doi/epdf/10.1002/rob.21640
     
+## Plotting Sonar data
+Keep in mind that this visualization is of a 360 degree scan, which takes ~5-20 seconds to complete, per the spec sheet of the sonar on the robot.
+```
+cd src/circ_girona_cala_viuda/scripts
+python3 visualize_sonar.py
+```
+![](images/sonar_viz.png)

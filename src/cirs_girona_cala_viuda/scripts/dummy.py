@@ -217,6 +217,8 @@ def car_main():
                          ], partial(error_odom, np.array([o[k]]))
         )
         graph.add(odof)
+    
+    print(graph)
 
     params = gtsam.LevenbergMarquardtParams()
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, v, params)
@@ -328,8 +330,6 @@ def auv_main():
         final_state[:, k] = val
     
     plot_vs_gt(auv_traj, final_state)
-
-
 
 if __name__ == '__main__':
     auv_main()

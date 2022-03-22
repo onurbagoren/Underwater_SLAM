@@ -1,5 +1,5 @@
-src/cirs_girona_cala_viuda/data
 devel/
+src/cirs_girona_cala_viuda/data/full_dataset.bag
 build/
 src/CMakeLists.txt
 .vscode

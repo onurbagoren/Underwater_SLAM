@@ -22,6 +22,13 @@ class MicronVisualizer:
         self.prev_time = self.times[0]
         self.time_idx = 0
 
+    def set_threshold(self, threshold):
+        '''
+        Set the threshold for the sonar readings. Thresholds should be \in [0, 1]
+        '''
+        max_intensity = np.max(self.intensities)
+        self.threshold = threshold * max_intensity
+
     def load_data(self):
         '''
         Return information about the data
@@ -68,15 +75,22 @@ class MicronVisualizer:
         self.intensities = self.intensity[self.time_idx:self.time_idx + idx, :]
         self.time_idx = idx
 
-
     def filter_sonar(self):
         '''
         Filter the sonar readings the way that theonly peaked paper describes
         Sonar map should become a sparse binary map with peak intensities
         '''
+        assert self.threshold is not None
+        # Set binary map for intensities that are above threshold
+        thresholded_intensities = np.copy(self.intensities)
+        thresholded_intensities[thresholded_intensities < self.threshold] = 0
+        thresholded_intensities[thresholded_intensities >= self.threshold] = 1
 
+        # Set a local minimum distance for the binary mask
 
-    def plot_data(self, mode='polar'):
+        return thresholded_intensities
+
+    def plot_data(self, intensities=None, mode='polar'):
         '''
         Plot sonar data
 
@@ -92,7 +106,8 @@ class MicronVisualizer:
         prev_time_idx = self.times.tolist().index(self.prev_time)
         tmp_time_idx = self.times.tolist().index(self.tmp_time)
         angles = self.angles[prev_time_idx:tmp_time_idx].reshape(-1, 1)
-        intensity = self.intensities[prev_time_idx:tmp_time_idx, :]
+        intensity = self.intensities[prev_time_idx:tmp_time_idx,
+                                     :] if intensities is None else intensities
 
         scan_range = np.arange(
             0, self.max_range, self.max_range / self.num_bins)
@@ -104,8 +119,12 @@ class MicronVisualizer:
             for i in range(beam_numbers.shape[0]):
                 beam_number = beam_numbers[i, :]
                 beam = scan_range[i, :]
-                plt.scatter(beam, beam_number,
-                            c=intensity[i, :], s=1, cmap='jet')
+                if intensities is None:
+                    plt.scatter(beam, beam_number,
+                                c=intensity[i, :], s=1, cmap='jet')
+                else:
+                    plt.scatter(
+                        beam, beam_number, c=intensity[i, :], s=1, cmap='gist_yarg', vmin = 0, vmax = 1)
                 plt.title(
                     f'Sonar data (polar coordinates)\nTime elapsed: {(self.tmp_time - self.prev_time) / 1e9:.3} seconds')
                 plt.xlabel('Beam number')
@@ -113,7 +132,8 @@ class MicronVisualizer:
         elif mode == 'cartesian':
             X = scan_range * np.cos(angles)
             Y = scan_range * np.sin(angles)
-            plt.scatter(X, Y, s=1, c=intensity, cmap='jet')
+            cmap = 'jet' if intensities is None else 'gray'
+            plt.scatter(X, Y, s=1, c=intensity, cmap=cmap)
             plt.title(
                 f'Sonar data (cartesian coordinates)\nTime elapsed: {(self.tmp_time - self.prev_time) / 1e9:.3} seconds')
             plt.xlabel('X (m)')
@@ -126,10 +146,13 @@ class MicronVisualizer:
 
 def main():
     micron = MicronVisualizer(
-        5, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv')
+        1, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv')
     micron.get_data()
+    micron.set_threshold(0.4)
     micron.plot_data(mode='polar')
-    micron.plot_data(mode='cartesian')
+    thresholded_intensities = micron.filter_sonar()
+    micron.plot_data(intensities=thresholded_intensities, mode='polar')
+    # micron.plot_data(mode='cartesian')
 
 
 if __name__ == '__main__':

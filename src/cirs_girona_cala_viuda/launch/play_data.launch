@@ -1,0 +1,20 @@
+<launch>
+    <!-- Params -->
+    <param name="use_sim_time" value="true"/>
+    <arg name="file" value="full_dataset.bag"/>
+    <arg name="path" value="$(find cirs_girona_cala_viuda)/data/"/>
+
+    <!-- Bag Player -->
+    <arg name="full_name" value="$(arg path)$(arg file)"/>
+    <node pkg="rosbag" type="play" name="rosbag" args="--clock -d 2 -r 1 $(arg full_name)"/>
+
+    <!-- RViz -->
+    <param name="robot_description" textfile="$(find cirs_girona_cala_viuda)/rviz/sparus.urdf"/>
+    <!-- Uncomment the following line if using ROS Noetic -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+    <!-- Uncomment the following line if using ROS Noetic -->
+    <!-- <node name="robot_state_publisher" pkg="robot_state_publisher" type="state_publisher"/> -->
+    <node pkg="tf" type="static_transform_publisher" name="rviz_to_world" args="0.0 0.0 0.0 0.0 0.0 3.14159 /rviz /world 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="sparus_to_mesh" args="-0.535 0.0 -0.12 0 0.0 0.0 /sparus /mesh 100"/>
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find cirs_girona_cala_viuda)/rviz/cala_viuda.rviz"/>
+</launch>

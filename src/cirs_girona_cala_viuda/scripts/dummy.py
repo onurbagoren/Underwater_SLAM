@@ -1,5 +1,4 @@
 from functools import partial
-from sre_parse import State
 from typing import List, Optional
 import matplotlib.pyplot as plt
 import matplotlib
@@ -124,6 +123,18 @@ def error_lm(measurement: np.ndarray, this: gtsam.CustomFactor,
         jacobians[0] = np.eye(1)
     return error
 
+
+def depth_error(measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam.Values, jacobians: Optional[List[np.ndarray]]) -> float:
+    """
+    Calculate the error between the odometry measurement and the odometry
+    prediction.
+    """
+    key = this.keys()[0]
+    estimate = values.atVector(key)
+    error = measurement - estimate[2]
+    if jacobians is not None:
+        jacobians[0] = np.eye(1) 
+    return error
 
 def simulate_auv() -> np.ndarray:
     """Simulate an AUV for one second"""
@@ -276,6 +287,7 @@ def auv_main():
 
     gps_sigma = 3 * np.eye(6)
     odom_sigma = 0.1 * np.eye(6)
+    depth_sigma = 0.1
     lm_sigma = 1
 
     # Define gps noise
@@ -310,7 +322,6 @@ def auv_main():
         graph.add(gps_factor)
     # State vector
     v = gtsam.Values()
-
     for i in range(auv_traj.shape[1]):
         v.insert(unknown[i], np.zeros((6, 1)))
 
@@ -319,11 +330,8 @@ def auv_main():
 
     res = optimizer.optimize()
     error = np.array([(res.atVector(unknown[k]) - auv_traj[:6, k])[0] for k in range(auv_traj.shape[1])])
-    # print("Result with GPS")
-    # print(res, np.round(error, 2),
-        #   f"\nJ(X)={0.5 * np.sum(np.square(error))}")
 
-    # Iterate through the values of the graph
+
     final_state = np.zeros((6, auv_traj.shape[1]))
     for k in range(auv_traj.shape[1]):
         val = res.atVector(unknown[k])

@@ -12,15 +12,15 @@ def wrap_to_pi(angle):
 
 class MicronVisualizer:
 
-    def __init__(self, time_interval, csv_file):
+    def __init__(self, time_interval, csv_file,time_id):
         self.time_interval = time_interval
         self.csv_file = csv_file
 
         self.load_data()
 
-        self.tmp_time = self.times[0]
-        self.prev_time = self.times[0]
-        self.time_idx = 0
+        self.tmp_time = self.times[time_id]
+        self.prev_time = self.times[time_id]
+        self.time_idx = time_id
 
     def set_threshold(self, threshold):
         '''
@@ -28,6 +28,7 @@ class MicronVisualizer:
         '''
         max_intensity = np.max(self.intensities)
         self.threshold = threshold * max_intensity
+        # print(self.threshold)
 
     def load_data(self):
         '''
@@ -84,10 +85,102 @@ class MicronVisualizer:
         # Set binary map for intensities that are above threshold
         thresholded_intensities = np.copy(self.intensities)
         thresholded_intensities[thresholded_intensities < self.threshold] = 0
-        # thresholded_intensities[thresholded_intensities >= self.threshold] = 1
+        #thresholded_intensities[thresholded_intensities >= self.threshold] = 1
+        thresholded_intensities[:,1:30] = 0               #elimate the intensity of the robot itself
+
 
         # Set a local minimum distance for the binary mask
+        
+       # find the max point to search other
+        m,n = thresholded_intensities.shape
 
+        max_value = np.max(thresholded_intensities)
+
+        max_value_index = np.unravel_index(thresholded_intensities.argmax(), thresholded_intensities.shape) 
+        thresholded_intensities[max_value_index[0]] = 0
+        thresholded_intensities[max_value_index[0], max_value_index[1]] = max_value  
+         
+           
+        #initial param that will use in search
+        search_range = 10   
+        temp_search_range = search_range    
+        temp_max = max_value
+        #initial the search point
+        line = max_value_index[0]
+        temp_index = max_value_index[1]
+        temp_max = max_value
+        # from max value line to 0
+        while line > 0:
+            line -= 1
+            temp = thresholded_intensities[line, temp_index-temp_search_range:temp_index+temp_search_range]
+            temp_max = np.max(temp)
+            # print("$$$$$$$$$$$$$$$$$$$")
+            # print(line)
+            # print(temp)
+            # print("sum")
+            # print(sum(thresholded_intensities[line]))
+            while temp_max ==0:                                             #avoid the max is zero
+                temp_search_range = temp_search_range + 5
+                temp = thresholded_intensities[line, temp_index-temp_search_range:temp_index+temp_search_range]
+                
+                if temp_search_range == 50:
+                    break
+                temp_max = np.max(temp)
+            # print(temp_search_range)
+            # print(temp_max)
+            # print(sum(thresholded_intensities[line]))
+            if temp_search_range == 50:
+                temp_search_range = search_range
+                thresholded_intensities[line] = 0
+                continue
+            if temp_index < temp_search_range:
+                temp_search_range = temp_index
+                
+            temp_index = np.unravel_index(temp.argmax(), temp.shape)[0] + temp_index - temp_search_range            
+            thresholded_intensities[line] = 0
+            thresholded_intensities[line, temp_index] = temp_max
+            temp_search_range = search_range
+        #reinitial the search point
+        line = max_value_index[0]
+        temp_index = max_value_index[1]
+        # from max value line to the edge
+        while line < m-1:            
+            line += 1
+            temp = thresholded_intensities[line, temp_index-temp_search_range:temp_index+temp_search_range]
+            temp_max = np.max(temp)
+            # print("$$$$$$$$$$$$$$$$$$$")
+            # print(line)
+            # print(temp)
+            
+            # print("sum")
+            # print(sum(thresholded_intensities[line]))
+            while temp_max ==0:                                                   #avoid the max is zero
+                temp_search_range = temp_search_range + 5
+                temp = thresholded_intensities[line, temp_index-temp_search_range:temp_index+temp_search_range]
+                # print("error while")
+                # print(temp_search_range)
+                # print(temp)
+                # print("range")
+                # print(temp_index-temp_search_range)
+                # print(temp_index+temp_search_range)
+                
+                if temp_search_range == 50:
+                    break
+                temp_max = np.max(temp)
+            # print(temp_search_range)
+            # print(temp_max)
+            # print(sum(thresholded_intensities[line]))
+            if temp_search_range == 50:
+                temp_search_range = search_range
+                thresholded_intensities[line] = 0
+                continue
+            if temp_index < temp_search_range:
+                temp_search_range = temp_index
+            temp_index = np.unravel_index(temp.argmax(), temp.shape)[0] + temp_index - temp_search_range            
+            thresholded_intensities[line] = 0
+            thresholded_intensities[line, temp_index] = temp_max
+            temp_search_range = search_range
+        # print(sum(thresholded_intensities[m-2]))
         return thresholded_intensities
 
     def plot_data(self, intensities=None, mode='polar'):
@@ -119,16 +212,20 @@ class MicronVisualizer:
             for i in range(beam_numbers.shape[0]):
                 beam_number = beam_numbers[i, :]
                 beam = scan_range[i, :]
-                plt.scatter(beam, beam_number,
-                            c=intensity[i, :], s=1, cmap='jet')
+                if intensities is None:
+                    plt.scatter(beam, beam_number,
+                                c=intensity[i, :], s=1, cmap='jet')
+                else:
+                    plt.scatter(
+                        beam, beam_number, c=intensity[i, :], s=1, cmap='gist_yarg', vmin = 0, vmax = 1)
                 plt.title(
-                    f'Sonar data (polar coordinates)\nTime elapsed: {(self.tmp_time - self.prev_time) / 1e9:.3} seconds')
-                plt.xlabel('Beam number')
-                plt.ylabel('Range (m)')
+                    f'Sonar data (polar coordinates)\nTime : {(self.tmp_time - self.prev_time) / 1e9:.3} seconds')
+                plt.ylabel('Beam number')
+                plt.xlabel('Range (m)')
         elif mode == 'cartesian':
             X = scan_range * np.cos(angles)
             Y = scan_range * np.sin(angles)
-            cmap = 'jet'
+            cmap = 'jet' if intensities is None else 'gray'
             plt.scatter(X, Y, s=1, c=intensity, cmap=cmap)
             plt.title(
                 f'Sonar data (cartesian coordinates)\nTime elapsed: {(self.tmp_time - self.prev_time) / 1e9:.3} seconds')
@@ -141,14 +238,18 @@ class MicronVisualizer:
 
 
 def main():
-    micron = MicronVisualizer(
-        1, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv')
-    micron.get_data()
-    micron.set_threshold(0.4)
-    micron.plot_data(mode='polar')
-    thresholded_intensities = micron.filter_sonar()
-    micron.plot_data(intensities=thresholded_intensities, mode='polar')
-    # micron.plot_data(mode='cartesian')
+    i = 0
+    FrameNum = 50 # For debugging, keep it less else 45599
+    Threshold = 0.01
+    while (i < FrameNum):
+        micron = MicronVisualizer(10, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv', i)
+        i+=10 
+        micron.get_data()
+        micron.set_threshold(Threshold)
+        micron.plot_data(mode='polar')
+        thresholded_intensities = micron.filter_sonar()
+        micron.plot_data(intensities=thresholded_intensities, mode='polar')
+        # micron.plot_data(mode='cartesian')
 
 
 if __name__ == '__main__':

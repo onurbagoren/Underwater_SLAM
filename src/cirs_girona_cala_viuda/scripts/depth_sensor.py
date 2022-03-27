@@ -180,7 +180,7 @@ def main():
     for i in range(auv_traj.shape[1]):
         pose = gtsam.Pose3(
             gtsam.Rot3(rot_mat(np.zeros((6,1)))[:3,:3]),
-            gtsam.Point3(np.zeros((3,)))
+            gtsam.Point3(auv_traj[:3, i])
         )
         initial_estimate.insert(unknown[i], pose)
 

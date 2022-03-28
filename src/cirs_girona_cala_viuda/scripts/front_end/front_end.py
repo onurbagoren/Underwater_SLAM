@@ -10,7 +10,7 @@ from gtsam.symbol_shorthand import B, V, X
 
 from scipy.spatial.transform import Rotation as R
 
-import rospy
+# import rospy
 
 BIAS_KEY = B(0)
 DATA_DIR = f'{sys.path[0]}/../../data'
@@ -146,7 +146,7 @@ class AUVGraphSLAM:
         '''
         file_path = os.path.join(DATA_DIR, filename)
 
-        times_df = pd.read_csv(file_path, sep='\n')
+        times_df = pd.read_csv(file_path)
         times = times_df['times'].values.astype(np.float64)
 
         self.camera_times = times
@@ -198,7 +198,11 @@ class AUVGraphSLAM:
         camera_idx = 0
         imu_idx = 0
 
-        while state_idx < state_step:
+        # change camera time interval to 1 second
+        camera_time = self.camera_times[0]
+        FREQ = 1e9 # custom time interval between factors (unit: ns)
+
+        while state_idx < 20: #state_step:
             # Get the state
             # store as NavState or Pose3?
             # For now using NavState in order to use the imuPreintegrator
@@ -244,10 +248,10 @@ class AUVGraphSLAM:
 
                 imu_idx += 1
 
-            if self.state_times[state_idx] > self.camera_times[camera_idx]:
+            if self.state_times[state_idx] > camera_time:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
-                    camera_idx+1), V(camera_idx), BIAS_KEY, self.pim)
+                    camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
                 self.graph.push_back(factor)
 
                 self.pim.resetIntegration()
@@ -261,9 +265,10 @@ class AUVGraphSLAM:
                     state.velocity()
                 ) 
 
-                self.initial.insert(X(camera_idx+1), new_state.pose())
-                self.initial.insert(V(camera_idx+1), new_state.velocity())
+                self.initial.insert(X(camera_idx+1), state.pose())
+                self.initial.insert(V(camera_idx+1), state.velocity())
                 camera_idx += 1
+                camera_time += FREQ  # custom time interval
 
             state_idx += 1
 
@@ -273,11 +278,11 @@ class AUVGraphSLAM:
     
     def optimize(self):
         print('Optimizing...')
-        optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
+        optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial)
         self.result = optimizer.optimize()
         print('Optimization complete')
 
 if __name__ == '__main__':
     GraphSLAM = AUVGraphSLAM()
     GraphSLAM.initialize()
-    # GraphSLAM.optimize()
+    GraphSLAM.optimize()

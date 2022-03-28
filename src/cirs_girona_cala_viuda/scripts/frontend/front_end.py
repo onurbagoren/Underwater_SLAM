@@ -7,10 +7,11 @@ import numpy as np
 import pandas as pd
 from gtsam import NavState, Point3, Pose3, Rot3
 from gtsam.symbol_shorthand import B, V, X
+from typing import Optional, List
 
 from scipy.spatial.transform import Rotation as R
 
-import rospy
+from mpl_toolkits.mplot3d import Axes3D
 
 BIAS_KEY = B(0)
 DATA_DIR = f'{sys.path[0]}/../../data'
@@ -39,7 +40,7 @@ class AUVGraphSLAM:
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
         self.dt = 1e-6
 
-    def readStatesFromIEKF(self, filename):
+    def read_iekf_states(self, filename):
         '''
         Read the SE_2(3) state output by the IEKF
 
@@ -140,7 +141,26 @@ class AUVGraphSLAM:
         self.imu_times = imu_time
         self.imu = imu
 
-    def get_camera_times(self, filename):
+    def read_depth_sensor(self, filename):
+        '''
+        Read the state of the depth sensor
+
+        Inputs
+        =======
+        filename: str
+            The filename of the data
+        '''
+        file_path = os.path.join(DATA_DIR, filename)
+
+        depth_df = pd.read_csv(file_path)
+
+        depth_time = depth_df['%time'].values.astype(np.float64)
+        depth = depth_df['field.depth'].values.astype(np.float64)
+
+        self.depth_times = depth_time
+        self.depth = depth
+
+    def read_camera_times(self, filename):
         '''
         Determine the times of the camera measurements
         '''
@@ -150,6 +170,10 @@ class AUVGraphSLAM:
         times = times_df['times'].values.astype(np.float64)
 
         self.camera_times = times
+
+    #####################################################################
+    ###########################   Getters   #############################
+    #####################################################################
 
     def getNavState(self, idx):
         '''
@@ -177,15 +201,37 @@ class AUVGraphSLAM:
         state = NavState(pose, v)
         return state
 
+    #####################################################################
+    ######################## Error definitions ##########################
+    #####################################################################
+
+    def depth_error(self, measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam.Values, jacobians: Optional[List[np.ndarray]]) -> float:
+        '''
+        Calculate the error betwen the depth sensor and the depth prediction
+        '''
+        # Measurement is >0, meaning that it should be inverted
+        assert measurement <= 0, 'Measurement should be negative'
+        key = this.keys()[0]
+        estimate = values.atPose3(key)
+        depth = estimate.z()
+        error = measurement - depth
+        if jacobians is not None:
+            val = np.zeros((1,6))
+            val[2] = 1
+            jacobians[0] = val
+        return error
+            
+
     def initialize(self):
         # Extract the data
 
         print('Initializing...')
 
-        self.readStatesFromIEKF('states.csv')
+        self.read_iekf_states('states.csv')
         self.read_state_times('state_times.csv')
         self.read_imu('full_dataset/imu_adis_ros.csv')
-        self.get_camera_times('full_dataset/camera_times.csv')
+        self.read_camera_times('full_dataset/camera_times.csv')
+        self.read_depth_sensor('full_dataset/depth_sensor.csv')
 
         camera_step = self.camera_times.shape[0]
         imu_step = self.imu_times.shape[0]
@@ -198,7 +244,10 @@ class AUVGraphSLAM:
         camera_idx = 0
         imu_idx = 0
 
-        while state_idx < state_step:
+        time_elapsed = 0
+        imu_time_elapsed = 0
+
+        while state_idx < 1000:  # state_step:
             # Get the state
             # store as NavState or Pose3?
             # For now using NavState in order to use the imuPreintegrator
@@ -217,13 +266,20 @@ class AUVGraphSLAM:
                 )
                 self.initial.insert(X(state_idx), state.pose())
                 self.initial.insert(V(state_idx), state.velocity())
+
+            dt = self.state_times[state_idx] - \
+                self.state_times[state_idx - 1]
+            if dt <= 0:
+                # Skip this state, means that the udate step is made in this step
+                state_idx += 1
+                continue
             else:
-                dt = self.state_times[state_idx] - \
-                    self.state_times[state_idx - 1]
-                if dt == 0:
-                    self.dt = 5e-2
-                else:
-                    self.dt = dt
+                self.dt = dt * 1e-9
+                print('dt: ', self.dt)
+                print('Time elapsed: ', time_elapsed)
+                time_elapsed += self.dt
+                imu_time_elapsed += self.dt
+                print('Time elapsed: ', time_elapsed)
 
             if self.state_times[state_idx] > self.imu_times[imu_idx]:
                 # Get IMU measurements
@@ -239,45 +295,101 @@ class AUVGraphSLAM:
                 measuredAcc = np.array(
                     [lin_acc_x, lin_acc_y, lin_acc_z]).reshape(-1, 1)
 
+                print(f'measuredOmega {measuredOmega.T}')
+                print(f'measuredAcc {measuredAcc.T}')
+                print(f'dt {self.dt}')
+
                 self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, self.dt)
+                    measuredOmega, measuredAcc, imu_time_elapsed)
+                imu_time_elapsed = 0
 
                 imu_idx += 1
 
-            if self.state_times[state_idx] > self.camera_times[camera_idx]:
+            # if self.state_times[state_idx] > self.camera_times[camera_idx]:
+            if time_elapsed > 1:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
-                    camera_idx+1), V(camera_idx), BIAS_KEY, self.pim)
-                self.graph.push_back(factor)
+                    camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
+                print(f'Factor:\n{factor}')
+                self.graph.add(factor)
 
                 self.pim.resetIntegration()
 
-                rotationNoise = gtsam.Rot3.Expmap(np.random.randn(3) * 0.1)
-                translationNoise = gtsam.Point3(*np.random.randn(3) * 1)
-                poseNoise = gtsam.Pose3(rotationNoise, translationNoise)
+                self.initial.insert(X(camera_idx+1), state.pose())
+                self.initial.insert(V(camera_idx+1), state.velocity())
 
-                new_state = gtsam.NavState(
-                    state.pose().compose(poseNoise),
-                    state.velocity()
-                ) 
-
-                self.initial.insert(X(camera_idx+1), new_state.pose())
-                self.initial.insert(V(camera_idx+1), new_state.velocity())
+                time_elapsed = 0
                 camera_idx += 1
 
             state_idx += 1
 
+        self.graph.push_back(
+            gtsam.PriorFactorPose3(
+                X(camera_idx), state.pose(), self.priorNoise)
+        )
+        self.graph.push_back(
+            gtsam.PriorFactorPoint3(
+                V(camera_idx), state.velocity(), self.velNoise)
+        )
+
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)
 
         print('Initialization complete')
-    
+
     def optimize(self):
         print('Optimizing...')
-        optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
+        params = gtsam.LevenbergMarquardtParams()
+        params.setVerbosityLM("SUMMARY")
+        optimizer = gtsam.LevenbergMarquardtOptimizer(
+            self.graph, self.initial, params)
+        # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
         self.result = optimizer.optimize()
         print('Optimization complete')
+
+    def plot_trajectories(self):
+        '''
+        Compare the trajectories
+        '''
+
+        res_poses = np.zeros((self.initial.size() // 2, 3))
+        init_poses = np.zeros((self.initial.size() // 2, 3))
+        j = 0
+        for i in range(self.initial.size()):
+            if X(i) in self.initial.keys():
+                init_pose = self.initial.atPose3(X(i))
+                init_x = init_pose.x()
+                init_y = init_pose.y()
+                init_z = init_pose.z()
+
+                init_poses[j, :] = np.array([init_x, init_y, init_z])
+
+                res_pose = self.result.atPose3(X(i))
+                res_x = res_pose.x()
+                res_y = res_pose.y()
+                res_z = res_pose.z()
+
+                res_poses[j, :] = np.array([res_x, res_y, res_z])
+                j += 1
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot(init_poses[:, 0], init_poses[:, 1],
+                init_poses[:, 2], label='Initial')
+        ax.scatter(init_poses[:, 0], init_poses[:, 1],
+                   init_poses[:, 2], c='r', marker='x')
+        ax.plot(res_poses[:, 0], res_poses[:, 1],
+                res_poses[:, 2], label='Result')
+        ax.scatter(res_poses[:, 0], res_poses[:, 1],
+                   res_poses[:, 2], c='b', marker='x')
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_zlabel('Z (m)')
+        ax.legend()
+        plt.show()
+
 
 if __name__ == '__main__':
     GraphSLAM = AUVGraphSLAM()
     GraphSLAM.initialize()
     GraphSLAM.optimize()
+    GraphSLAM.plot_trajectories()

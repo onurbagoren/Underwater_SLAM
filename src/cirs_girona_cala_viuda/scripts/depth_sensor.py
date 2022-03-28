@@ -28,6 +28,8 @@ def simulate_auv() -> np.ndarray:
     dt = 0.25
     num_steps = int(10 / dt)
 
+    times = np.linspace(0, num_steps, num_steps)
+
     eta = np.zeros((6, num_steps))
     nu = np.zeros((6, num_steps))
     eta[:, 0] = eta0.reshape(6,)
@@ -44,7 +46,7 @@ def simulate_auv() -> np.ndarray:
 
     state = np.vstack((eta, nu))
 
-    return state
+    return state, times
 
 
 def depth_error(measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam.Values, jacobians: Optional[List[np.ndarray]]) -> float:
@@ -62,12 +64,13 @@ def depth_error(measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam
     return error
 
 
-def plot_states(state):
+def plot_states(state, depth_vals, traj_times):
     # Plot positions
     fig, axs = plt.subplots(2, 1, sharex=True)
     axs[0].plot(state[0, :], label='x')
     axs[0].plot(state[1, :], label='y')
     axs[0].plot(state[2, :], label='z')
+    axs[0].scatter(traj_times, depth_vals, label='depth')
     axs[0].legend()
     fig.suptitle('Position')
 
@@ -126,13 +129,13 @@ def plot_vs_gt(gt_trajectory, final_trajectory):
     plt.show()
 
 def main():
-    auv_traj = simulate_auv()
+    auv_traj, auv_times = simulate_auv()
 
     # Define noise parameters for the sensors
     odom_sigma = 0.1 * np.eye(6)
     depth_sigma = 0.1
 
-    plot_states(auv_traj)
+    # plot_states(auv_traj)
 
     # Define noise
     odom_noise = odom_sigma @ np.random.randn(6, auv_traj.shape[1])
@@ -166,13 +169,15 @@ def main():
         auv_traj[2, k] + np.random.randn() * depth_sigma for k in range(auv_traj.shape[1])
     ])
 
+    plot_states(auv_traj, depth_vals, auv_times)
+
     # When this block is commented, performs better
-    # for i in range(auv_traj.shape[1]):
-    #     depth_val = depth_vals[i]
-    #     depth = gtsam.CustomFactor(
-    #         depth_model, [unknown[i]], partial(depth_error, np.array([depth_val]))
-    #     )
-    #     graph.add(depth)
+    for i in range(auv_traj.shape[1]):
+        depth_val = depth_vals[i]
+        depth = gtsam.CustomFactor(
+            depth_model, [unknown[i]], partial(depth_error, np.array([depth_val]))
+        )
+        graph.add(depth)
 
     
     # Initialize values
@@ -201,6 +206,16 @@ def main():
         theta = np.arctan2(-rot[2,0], np.sqrt(rot[2,1]**2 + rot[2,2]**2))
         psi = np.arctan2(rot[1,0], rot[0,0])
         final_trajectory[:, i] = np.array([x, y, z, phi, theta, psi])
+    
+    res_pose = np.zeros((3, auv_traj.shape[1]))
+    for i in range(result.size()):
+        x = result.atPose3(unknown[i]).x()
+        y = result.atPose3(unknown[i]).y()
+        z = result.atPose3(unknown[i]).z()
+        res_pose[:, i] = np.array([x, y, z])
+    error_pose = np.array([(res_pose[:,k] - auv_traj[:3, k])[0] for k in range(auv_traj.shape[1])])
+
+    print('Error in position:', np.linalg.norm(error_pose))
 
     plot_vs_gt(auv_traj, final_trajectory)
 if __name__ == '__main__':

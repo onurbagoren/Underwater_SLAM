@@ -174,7 +174,6 @@ def main():
 
     # This is great, but GPS noise is still apparent, so now we add the two landmarks
     lm_model = gtsam.noiseModel.Isotropic.Sigma(1, sigma_lm)
-    print(lm_0 + z_0)
     factor_graph.add(
         gtsam.CustomFactor(lm_model, [unknown[0]],
                            partial(error_lm, np.array([lm_0 + z_0]))))

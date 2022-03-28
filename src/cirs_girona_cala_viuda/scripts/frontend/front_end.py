@@ -281,7 +281,7 @@ class AUVGraphSLAM:
                 imu_time_elapsed += self.dt
                 print('Time elapsed: ', time_elapsed)
 
-            if self.state_times[state_idx] > self.imu_times[imu_idx]:
+            while self.state_times[state_idx] > self.imu_times[imu_idx]:
                 # Get IMU measurements
                 omega_x = self.imu['omega_x'][imu_idx]
                 omega_y = self.imu['omega_y'][imu_idx]

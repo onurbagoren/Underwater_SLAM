@@ -245,9 +245,8 @@ class AUVGraphSLAM:
         imu_idx = 0
 
         time_elapsed = 0
-        imu_time_elapsed = 0
 
-        while state_idx < 1000:  # state_step:
+        while state_idx < state_step:
             # Get the state
             # store as NavState or Pose3?
             # For now using NavState in order to use the imuPreintegrator
@@ -275,13 +274,8 @@ class AUVGraphSLAM:
                 continue
             else:
                 self.dt = dt * 1e-9
-                print('dt: ', self.dt)
-                print('Time elapsed: ', time_elapsed)
                 time_elapsed += self.dt
-                imu_time_elapsed += self.dt
-                print('Time elapsed: ', time_elapsed)
-
-            while self.state_times[state_idx] > self.imu_times[imu_idx]:
+            while self.state_times[state_idx] >= self.imu_times[imu_idx]:
                 # Get IMU measurements
                 omega_x = self.imu['omega_x'][imu_idx]
                 omega_y = self.imu['omega_y'][imu_idx]
@@ -294,23 +288,26 @@ class AUVGraphSLAM:
                     [omega_x, omega_y, omega_z]).reshape(-1, 1)
                 measuredAcc = np.array(
                     [lin_acc_x, lin_acc_y, lin_acc_z]).reshape(-1, 1)
+                
+                imu_dt = -1
+                if imu_idx > 0:
+                    imu_dt = self.imu_times[imu_idx] - \
+                        self.imu_times[imu_idx - 1]
+                    imu_dt *= 1e-9
+                    if imu_dt < self.dt:
+                        self.dt = imu_dt
 
-                print(f'measuredOmega {measuredOmega.T}')
-                print(f'measuredAcc {measuredAcc.T}')
-                print(f'dt {self.dt}')
 
                 self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, imu_time_elapsed)
-                imu_time_elapsed = 0
-
+                    measuredOmega, measuredAcc, self.dt)
                 imu_idx += 1
 
             # if self.state_times[state_idx] > self.camera_times[camera_idx]:
-            if time_elapsed > 1:
+            if time_elapsed > 0.5:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
                     camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
-                print(f'Factor:\n{factor}')
+                print(f'factor: {factor}')
                 self.graph.add(factor)
 
                 self.pim.resetIntegration()

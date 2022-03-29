@@ -91,13 +91,14 @@ class MicronVisualizer:
 
         # Set a local minimum distance for the binary mask
 
-       # find the max point to search other
+        # find the max point to search other
         m, n = thresholded_intensities.shape
 
+        # Get max value and its index in a 2D array
         max_value = np.max(thresholded_intensities)
-
         max_value_index = np.unravel_index(
             thresholded_intensities.argmax(), thresholded_intensities.shape)
+
         thresholded_intensities[max_value_index[0]] = 0
         thresholded_intensities[max_value_index[0],
                                 max_value_index[1]] = max_value
@@ -224,15 +225,15 @@ def main():
     i = 0
     FrameNum = 50  # For debugging, keep it less else 45599
     Threshold = 0.4
-    while (i < FrameNum):
-        micron = MicronVisualizer(
-            5, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv', i)
-        i += 5
-        micron.get_data()
-        micron.set_threshold(Threshold)
-        micron.plot_data(mode='cartesian')
-        thresholded_intensities = micron.filter_sonar()
-        micron.plot_data(intensities=thresholded_intensities, mode='cartesian')
+    # while (i < FrameNum):
+    micron = MicronVisualizer(
+        5, f'{sys.path[0]}/../../data/full_dataset/sonar_micron.csv', i)
+        # i += 5
+    micron.get_data()
+    micron.set_threshold(Threshold)
+    micron.plot_data(mode='cartesian')
+    thresholded_intensities = micron.filter_sonar()
+    micron.plot_data(intensities=thresholded_intensities, mode='cartesian')
         # micron.plot_data(mode='cartesian')
 
 

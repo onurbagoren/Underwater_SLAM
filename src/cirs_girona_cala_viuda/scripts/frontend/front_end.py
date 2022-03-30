@@ -171,6 +171,24 @@ class AUVGraphSLAM:
 
         self.camera_times = times
 
+    def read_depth_sensor(self, filename):
+        '''
+        Read the state of the depth sensor
+
+        Inputs
+        =======
+        filename: str
+            The filename of the data
+        '''
+        file_path = os.path.join(DATA_DIR, filename)
+
+        depth_df = pd.read_csv(file_path)
+
+        depth_time = depth_df['%time'].values.astype(np.float64)
+        depth = depth_df['field.depth'].values.astype(np.float64)
+
+        self.depth_times = depth_time
+        self.depth = depth
     #####################################################################
     ###########################   Getters   #############################
     #####################################################################
@@ -232,6 +250,7 @@ class AUVGraphSLAM:
         self.read_imu('full_dataset/imu_adis_ros.csv')
         self.read_depth_sensor('full_dataset/depth_sensor.csv')
 
+
         state_step = self.state_times.shape[0]
 
         # Initialize IMU preintegrator
@@ -242,6 +261,7 @@ class AUVGraphSLAM:
         imu_idx = 0
 
         time_elapsed = 0
+        total_time_elapsed = 0
 
         while state_idx < state_step:
             # Get the state
@@ -272,19 +292,26 @@ class AUVGraphSLAM:
             else:
                 self.dt = dt * 1e-9
                 time_elapsed += self.dt
+                total_time_elapsed += self.dt
             while self.state_times[state_idx] >= self.imu_times[imu_idx]:
                 # Get IMU measurements
-                omega_x = self.imu['omega_x'][imu_idx]
-                omega_y = self.imu['omega_y'][imu_idx]
-                omega_z = self.imu['omega_z'][imu_idx]
-                lin_acc_x = self.imu['ax'][imu_idx]
-                lin_acc_y = self.imu['ay'][imu_idx]
-                lin_acc_z = self.imu['az'][imu_idx]
+                omega_x = self.imu['omega_x']
+                omega_y = self.imu['omega_y']
+                omega_z = self.imu['omega_z']
+                lin_acc_x = self.imu['ax']
+                lin_acc_y = self.imu['ay']
+                lin_acc_z = self.imu['az']
+
+                omegas = np.array([omega_x, omega_y, omega_z])
+                lin_accs = np.array([lin_acc_x, lin_acc_y, lin_acc_z])
+
+                mean_omegas = self.floating_mean(omegas, imu_idx, 1)
+                mean_lin_accs = self.floating_mean(lin_accs, imu_idx, 1)
 
                 measuredOmega = np.array(
-                    [omega_x, omega_y, omega_z]).reshape(-1, 1)
+                    [mean_omegas[0], mean_omegas[1], mean_omegas[2]]).reshape(-1, 1)
                 measuredAcc = np.array(
-                    [lin_acc_x, lin_acc_y, lin_acc_z]).reshape(-1, 1)
+                    [mean_lin_accs[0], mean_lin_accs[1], mean_lin_accs[2]]).reshape(-1, 1)
                 
                 # imu_dt = -1
                 # if imu_idx > 0:
@@ -301,7 +328,6 @@ class AUVGraphSLAM:
                     measuredOmega, measuredAcc, self.dt)
                 imu_idx += 1
 
-            # if self.state_times[state_idx] > self.camera_times[camera_idx]:
             if time_elapsed > 2:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
@@ -343,6 +369,19 @@ class AUVGraphSLAM:
         self.result = optimizer.optimize()
         print('Optimization complete')
 
+
+
+    def floating_mean(self, data, index, window):
+        if index > window:
+            floating_mean = np.zeros_like(data[:,index])
+            for i in range(window):
+                floating_mean += data[:,(index-window+1+i)]
+            floating_mean = floating_mean/window
+        else:
+            floating_mean = data[:,index]
+        return floating_mean
+
+
     def plot_trajectories(self):
         '''
         Compare the trajectories
@@ -372,12 +411,12 @@ class AUVGraphSLAM:
         ax = fig.add_subplot(111, projection='3d')
         ax.plot(init_poses[:, 0], init_poses[:, 1],
                 init_poses[:, 2], label='Initial')
-        # ax.scatter(init_poses[:, 0], init_poses[:, 1],
-        #            init_poses[:, 2], c='r', marker='x')
+        ax.scatter(init_poses[:, 0], init_poses[:, 1],
+                   init_poses[:, 2], c='b', marker='x')
         ax.plot(res_poses[:, 0], res_poses[:, 1],
                 res_poses[:, 2], label='Result')
-        # ax.scatter(res_poses[:, 0], res_poses[:, 1],
-        #            res_poses[:, 2], c='b', marker='x')
+        ax.scatter(res_poses[:, 0], res_poses[:, 1],
+                   res_poses[:, 2], c='r', marker='x')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
@@ -386,7 +425,9 @@ class AUVGraphSLAM:
 
         fig, axs = plt.subplots(1, 1)
         axs.plot(init_poses[:, 0], init_poses[:,1], label='Initial')
+        axs.scatter(init_poses[:, 0], init_poses[:, 1], c = 'r', marker = 'x')
         axs.plot(res_poses[:, 0], res_poses[:,1], label='Result')
+        axs.scatter(res_poses[:, 0], res_poses[:, 1], c = 'b', marker = 'x')
         axs.set_xlabel('X (m)')
         axs.set_ylabel('Y (m)')
         axs.legend()
@@ -398,3 +439,4 @@ if __name__ == '__main__':
     GraphSLAM.initialize()
     GraphSLAM.optimize()
     GraphSLAM.plot_trajectories()
+

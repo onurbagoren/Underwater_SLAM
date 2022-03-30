@@ -230,11 +230,8 @@ class AUVGraphSLAM:
         self.read_iekf_states('states.csv')
         self.read_state_times('state_times.csv')
         self.read_imu('full_dataset/imu_adis_ros.csv')
-        self.read_camera_times('full_dataset/camera_times.csv')
         self.read_depth_sensor('full_dataset/depth_sensor.csv')
 
-        camera_step = self.camera_times.shape[0]
-        imu_step = self.imu_times.shape[0]
         state_step = self.state_times.shape[0]
 
         # Initialize IMU preintegrator
@@ -289,23 +286,23 @@ class AUVGraphSLAM:
                 measuredAcc = np.array(
                     [lin_acc_x, lin_acc_y, lin_acc_z]).reshape(-1, 1)
                 
-                imu_dt = -1
-                if imu_idx > 0:
-                    imu_dt = self.imu_times[imu_idx] - \
-                        self.imu_times[imu_idx - 1]
-                    imu_dt *= 1e-9
-                    if imu_dt < self.dt:
-                        self.dt = imu_dt
-                else:
-                    imu_dt = self.dt
+                # imu_dt = -1
+                # if imu_idx > 0:
+                #     imu_dt = self.imu_times[imu_idx] - \
+                #         self.imu_times[imu_idx - 1]
+                #     imu_dt *= 1e-9
+                #     if imu_dt < self.dt:
+                #         self.dt = imu_dt
+                # else:
+                #     imu_dt = self.dt
 
 
                 self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, imu_dt)
+                    measuredOmega, measuredAcc, self.dt)
                 imu_idx += 1
 
             # if self.state_times[state_idx] > self.camera_times[camera_idx]:
-            if time_elapsed > 1:
+            if time_elapsed > 2:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
                     camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
@@ -339,7 +336,7 @@ class AUVGraphSLAM:
         print('Optimizing...')
         params = gtsam.LevenbergMarquardtParams()
         params.setVerbosityLM("SUMMARY")
-        params.setMaxIterations(250)
+        params.setMaxIterations(1000)
         optimizer = gtsam.LevenbergMarquardtOptimizer(
             self.graph, self.initial, params)
         # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
@@ -385,6 +382,14 @@ class AUVGraphSLAM:
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
         ax.legend()
+        plt.show()
+
+        fig, axs = plt.subplots(1, 1)
+        axs.plot(init_poses[:, 0], init_poses[:,1], label='Initial')
+        axs.plot(res_poses[:, 0], res_poses[:,1], label='Result')
+        axs.set_xlabel('X (m)')
+        axs.set_ylabel('Y (m)')
+        axs.legend()
         plt.show()
 
 

@@ -95,7 +95,7 @@ class AUViSAM:
         estimate = values.Pose3(key)
         error = measurement - estimate.z()
         if jacobians is not None:
-            val = np.ones((1, 6))
+            val = np.zeros((1, 6))
             val[0, 2] = 1
             jacobians[0] = val
         return error
@@ -203,7 +203,7 @@ class AUViSAM:
                         imu_factor = gtsam.ImuFactor(X(depth_idx), V(depth_idx), X(depth_idx + 1), V(depth_idx + 1), BIAS_KEY, self.pim)
 
                         graph.add(depth_factor)
-                        graph.add(imu_factor)
+                        # graph.add(imu_factor)
 
                         initial.insert(X(depth_idx+1), state.pose())
                         initial.insert(V(depth_idx+1), state.velocity())

@@ -25,7 +25,7 @@ def simulate_auv() -> np.ndarray:
     """Simulate an AUV for one second"""
     eta0 = np.zeros((6, 1))
     nu0 = 25 * np.ones((6, 1))
-    dt = 0.25
+    dt = 1
     num_steps = int(10 / dt)
 
     times = np.linspace(0, num_steps, num_steps)

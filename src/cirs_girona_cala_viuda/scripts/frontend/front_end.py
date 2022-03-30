@@ -296,18 +296,20 @@ class AUVGraphSLAM:
                     imu_dt *= 1e-9
                     if imu_dt < self.dt:
                         self.dt = imu_dt
+                else:
+                    imu_dt = self.dt
 
 
                 self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, self.dt)
+                    measuredOmega, measuredAcc, imu_dt)
                 imu_idx += 1
 
             # if self.state_times[state_idx] > self.camera_times[camera_idx]:
-            if time_elapsed > 0.5:
+            if time_elapsed > 1:
                 # Add factor at the time when a camera measurement is available
                 factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
                     camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
-                print(f'factor: {factor}')
+                # print(f'factor: {factor}')
                 self.graph.add(factor)
 
                 self.pim.resetIntegration()
@@ -320,14 +322,14 @@ class AUVGraphSLAM:
 
             state_idx += 1
 
-        self.graph.push_back(
-            gtsam.PriorFactorPose3(
-                X(camera_idx), state.pose(), self.priorNoise)
-        )
-        self.graph.push_back(
-            gtsam.PriorFactorPoint3(
-                V(camera_idx), state.velocity(), self.velNoise)
-        )
+        # self.graph.push_back(
+        #     gtsam.PriorFactorPose3(
+        #         X(camera_idx), state.pose(), self.priorNoise)
+        # )
+        # self.graph.push_back(
+        #     gtsam.PriorFactorPoint3(
+        #         V(camera_idx), state.velocity(), self.velNoise)
+        # )
 
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)
 
@@ -337,6 +339,7 @@ class AUVGraphSLAM:
         print('Optimizing...')
         params = gtsam.LevenbergMarquardtParams()
         params.setVerbosityLM("SUMMARY")
+        params.setMaxIterations(250)
         optimizer = gtsam.LevenbergMarquardtOptimizer(
             self.graph, self.initial, params)
         # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
@@ -372,12 +375,12 @@ class AUVGraphSLAM:
         ax = fig.add_subplot(111, projection='3d')
         ax.plot(init_poses[:, 0], init_poses[:, 1],
                 init_poses[:, 2], label='Initial')
-        ax.scatter(init_poses[:, 0], init_poses[:, 1],
-                   init_poses[:, 2], c='r', marker='x')
+        # ax.scatter(init_poses[:, 0], init_poses[:, 1],
+        #            init_poses[:, 2], c='r', marker='x')
         ax.plot(res_poses[:, 0], res_poses[:, 1],
                 res_poses[:, 2], label='Result')
-        ax.scatter(res_poses[:, 0], res_poses[:, 1],
-                   res_poses[:, 2], c='b', marker='x')
+        # ax.scatter(res_poses[:, 0], res_poses[:, 1],
+        #            res_poses[:, 2], c='b', marker='x')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')

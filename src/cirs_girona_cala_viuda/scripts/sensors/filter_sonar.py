@@ -233,7 +233,7 @@ def main():
     micron.set_threshold(Threshold)
     micron.plot_data(mode='cartesian')
     thresholded_intensities = micron.filter_sonar()
-    micron.plot_data(intensities=thresholded_intensities, mode='cartesian')
+    micron.plot_data(intensities=thresholded_intensities, mode='polar')
         # micron.plot_data(mode='cartesian')
 
 

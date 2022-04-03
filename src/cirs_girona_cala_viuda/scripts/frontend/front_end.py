@@ -6,18 +6,17 @@ import gtsam
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from gtsam import NavState, Point3, Pose3, Rot3
+from gtsam import NavState, Pose3, Rot3
 from gtsam.symbol_shorthand import B, V, X
 from typing import Optional, List
+import csv
 
 from scipy.spatial.transform import Rotation as R
 
 from mpl_toolkits.mplot3d import Axes3D
-from torch import Graph
 
 BIAS_KEY = B(0)
 DATA_DIR = f'{sys.path[0]}/../../data'
-
 
 class AUVGraphSLAM:
 
@@ -47,7 +46,25 @@ class AUVGraphSLAM:
         # Set time threshold to 10 ms
         self.time_threshold = 1e-4
 
-        self.node_add = 0.2
+        self.node_add = 0.5
+
+    def read_comparison_slam(self, filename):
+        '''
+        Read SLAM result from Mallios et al.
+        '''
+        # Compare results to slam solution
+        slam = []
+        with open(os.path.join(DATA_DIR, filename)) as csvf:
+            reader = csv.reader(csvf)
+            for row in reader:
+                slam.append([float(s) for s in row])
+        slam = np.array(slam).T  # Note their results are in DVL frame
+        slam_times = np.array(slam)[:, 0]
+        slam = slam[:, 1:]
+        slam[:, 1:] = -slam[:, 1:]
+
+        self.slam_times = slam_times
+        self.asekf_slam = slam
 
     def read_iekf_states(self, filename):
         '''
@@ -275,7 +292,7 @@ class AUVGraphSLAM:
         vy = estimate[1]
         vz = estimate[2]
         error = np.array(
-            [measurement[0,0] - vx, measurement[0,1] - vy, measurement[0,2] - vz])
+            [measurement[0, 0] - vx, measurement[0, 1] - vy, measurement[0, 2] - vz])
         if jacobians is not None:
             val = np.zeros((3, 6))
             val[:, 3:] = np.eye(3)
@@ -484,6 +501,8 @@ class AUVGraphSLAM:
         Compare the trajectories
         '''
 
+        self.read_comparison_slam('comparison/asekf_slam.csv')
+
         res_poses = np.zeros((self.initial.size() // 2, 6))
         init_poses = np.zeros((self.initial.size() // 2, 6))
         j = 0
@@ -540,20 +559,25 @@ class AUVGraphSLAM:
         plt.show()
 
         fig, axs = plt.subplots(3, 2)
+        res_poses_shape = res_poses.shape[0]
+        slam_times = np.linspace(0, res_poses_shape, self.asekf_slam.shape[0])
         axs[0, 0].plot(res_poses[:, 0], c='b', label='Result')
         axs[0, 0].plot(init_poses[:, 0], c='r', label='Initial')
+        axs[0, 0].plot(slam_times,self.asekf_slam[:, 0], c='g', label='GT')
         axs[0, 0].set_xlabel('Time')
         axs[0, 0].set_ylabel('X (m)')
         axs[0, 0].legend()
 
         axs[1, 0].plot(res_poses[:, 1], c='b', label='Result')
         axs[1, 0].plot(init_poses[:, 1], c='r', label='Initial')
+        axs[1, 0].plot(slam_times,self.asekf_slam[:, 1], c='g', label='GT')
         axs[1, 0].set_xlabel('Time')
         axs[1, 0].set_ylabel('Y (m)')
         axs[1, 0].legend()
 
         axs[2, 0].plot(res_poses[:, 2], c='b', label='Result')
         axs[2, 0].plot(init_poses[:, 2], c='r', label='Initial')
+        axs[2, 0].plot(slam_times,self.asekf_slam[:, 2], c='g', label='GT')
         axs[2, 0].set_xlabel('Time')
         axs[2, 0].set_ylabel('Z (m)')
         axs[2, 0].legend()

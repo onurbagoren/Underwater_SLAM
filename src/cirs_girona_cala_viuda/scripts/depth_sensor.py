@@ -25,7 +25,7 @@ def simulate_auv() -> np.ndarray:
     """Simulate an AUV for one second"""
     eta0 = np.zeros((6, 1))
     nu0 = 25 * np.ones((6, 1))
-    dt = 1
+    dt = 0.25
     num_steps = int(10 / dt)
 
     times = np.linspace(0, num_steps, num_steps)
@@ -57,10 +57,12 @@ def depth_error(measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam
     key = this.keys()[0]
     estimate = values.atPose3(key)
     error = measurement - estimate.z()
+    print(f'Estimate at {key}: {estimate}')
     if jacobians is not None:
-        val = np.zeros((1,6))
-        val[0, 2] = 1
+        val = np.zeros((1,500))
+        val[0, 299] = 1
         jacobians[0] = val
+        print(f'Jacobian at {key}: {jacobians[0]}')
     return error
 
 
@@ -191,6 +193,7 @@ def main():
 
     params = gtsam.LevenbergMarquardtParams()
     params.setVerbosityLM("SUMMARY")
+    params.setMaxIterations(3)
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimate, params)
     result = optimizer.optimize()
 

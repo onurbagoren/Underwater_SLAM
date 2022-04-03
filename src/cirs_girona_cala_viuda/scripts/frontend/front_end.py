@@ -41,12 +41,13 @@ class AUVGraphSLAM:
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
         self.depth_model = gtsam.noiseModel.Isotropic.Sigma(1, 0.1)
         self.dvl_model = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        self.odom_model = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
         self.dt = 1e-6
 
         # Set time threshold to 10 ms
-        self.time_threshold = 1e-4
+        self.time_threshold = 1e-3
 
-        self.node_add = 0.5
+        self.node_add = 1
 
     def read_comparison_slam(self, filename):
         '''
@@ -232,6 +233,28 @@ class AUVGraphSLAM:
         self.dvl = np.vstack((vx, vy, vz))
         self.dvl_times = dvl_time
 
+    
+    def read_odom(self, filename):
+        '''
+        Read the odometry data
+        '''
+        file_path = os.path.join(DATA_DIR, filename)
+
+        odom_df = pd.read_csv(file_path)
+
+        odom_time = odom_df['%time'].values.astype(np.float64)
+        odom_x = odom_df['field.pose.pose.position.x'].values.astype(np.float64)
+        odom_y = odom_df['field.pose.pose.position.y'].values.astype(np.float64)
+        odom_z = odom_df['field.pose.pose.position.z'].values.astype(np.float64)
+        odom_qx = odom_df['field.pose.pose.orientation.x'].values.astype(np.float64)
+        odom_qy = odom_df['field.pose.pose.orientation.y'].values.astype(np.float64)
+        odom_qz = odom_df['field.pose.pose.orientation.z'].values.astype(np.float64)
+        odom_qw = odom_df['field.pose.pose.orientation.w'].values.astype(np.float64)
+
+        self.odom_time = odom_time
+        self.odom = np.vstack((odom_x, odom_y, odom_z, odom_qx, odom_qy, odom_qz, odom_qw))
+
+
     #####################################################################
     ###########################   Getters   #############################
     #####################################################################
@@ -313,6 +336,7 @@ class AUVGraphSLAM:
         self.read_imu('full_dataset/imu_adis_ros.csv')
         self.read_depth_sensor('full_dataset/depth_sensor.csv')
         self.read_dvl('full_dataset/dvl_linkquest.csv')
+        self.read_odom('full_dataset/odometry.csv')
 
         state_step = self.state_times.shape[0]
 
@@ -414,8 +438,8 @@ class AUVGraphSLAM:
                 depth_diff = abs(total_time_elapsed - depth_time)
 
                 if depth_diff < self.time_threshold:
-                    print(
-                        f'Below threshold for depth at time: {total_time_elapsed}!')
+                    # print(
+                        # f'Below threshold for depth at time: {total_time_elapsed}!')
                     depth_factor = gtsam.CustomFactor(
                         self.depth_model, [
                             X(node_idx+1)], partial(self.depth_error, np.array([depth_measurement]))
@@ -434,13 +458,38 @@ class AUVGraphSLAM:
                 dvl_diff = abs(total_time_elapsed - dvl_time)
 
                 if dvl_diff < self.time_threshold:
-                    print(
-                        f'Below threshold for dvl at time: {total_time_elapsed}!')
+                    # print(
+                        # f'Below threshold for dvl at time: {total_time_elapsed}!')
                     dvl_factor = gtsam.CustomFactor(
                         self.dvl_model, [
                             V(node_idx+1)], partial(self.velocity_error, np.array([dvl_measurement]))
                     )
                     self.graph.add(dvl_factor)
+
+                
+                # Add an odometry factor between the previous state and the current state
+                # +1 because the initial node
+                # Find the closest time to the current time
+                odometry_times = (self.odom_time - initial_time) * 1e-9
+                odometry_idx = np.argmin(np.abs(odometry_times - total_time_elapsed))
+                odometry_time = odometry_times[odometry_idx]
+                odometry = self.odom[:, odometry_idx]
+
+                # Compute difference between current time and odometry time
+                odometry_diff = abs(total_time_elapsed - odometry_time)
+
+                if odometry_diff < self.time_threshold:
+                    # print(
+                    #     f'Below threshold for odometry at time: {total_time_elapsed}!')
+                    # Construct Odom as Pose3
+                    position = gtsam.Point3(odometry[0], odometry[1], odometry[2])
+                    orientation = gtsam.Rot3.Quaternion(
+                        odometry[3], odometry[4], odometry[5], odometry[6])
+                    odom_pose = gtsam.Pose3(orientation, position)
+                    odometry_factor = gtsam.BetweenFactorPose3(
+                        X(node_idx), X(node_idx+1), odom_pose, self.odom_model)
+                    # self.graph.add(odometry_factor)
+
 
                 self.pim.resetIntegration()
 

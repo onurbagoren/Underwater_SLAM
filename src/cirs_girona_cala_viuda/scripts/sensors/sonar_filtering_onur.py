@@ -19,6 +19,7 @@ class MicronVisualizer:
         self.threshold = threshold
 
         self.load_data()
+        self.max_time = (self.times[-1] - self.times[0]) * 1e-9
 
         self.tmp_time = self.times[0]
         self.prev_time = self.times[0]
@@ -59,8 +60,8 @@ class MicronVisualizer:
             where N: num datapoints within time_interval
                   T: total time elapsed in seconds 
         '''
-        one_sec_further = self.tmp_time
-        if self.tmp_time == self.prev_time:
+        one_sec_further = self.start_time
+        if self.start_time == self.prev_time:
             one_sec_further += self.time_interval * 1e9
         else:
             self.prev_time = self.tmp_time
@@ -308,6 +309,22 @@ class MicronVisualizer:
                 axs[1].plot([prev_y, curr_y], [prev_x, curr_x], '--', c='black', linewidth=0.5)
         axs[1].invert_yaxis()
         plt.show()
+    
+    def start_filtering(self):
+        '''
+        Filter data continuously
+        '''
+
+        time = self.time_interval
+        while time < self.max_time:
+            # Get the time between two consecutive scans
+            next_time = time + self.time_interval
+
+            # Do stuff
+
+
+
+
 
 def main():
     micron = MicronVisualizer(
@@ -316,6 +333,7 @@ def main():
     micron.plot_data()
     thresholded_intensities = micron.filter_sonar()
     micron.plot_data_with_threshold(intensities = thresholded_intensities)
+    micron.start_filtering()
 
 
 if __name__ == '__main__':

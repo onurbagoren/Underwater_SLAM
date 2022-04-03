@@ -1,3 +1,4 @@
+from functools import partial
 import os
 import sys
 
@@ -12,6 +13,7 @@ from typing import Optional, List
 from scipy.spatial.transform import Rotation as R
 
 from mpl_toolkits.mplot3d import Axes3D
+from torch import Graph
 
 BIAS_KEY = B(0)
 DATA_DIR = f'{sys.path[0]}/../../data'
@@ -38,7 +40,14 @@ class AUVGraphSLAM:
 
         self.priorNoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
+        self.depth_model = gtsam.noiseModel.Isotropic.Sigma(1, 0.1)
+        self.dvl_model = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
         self.dt = 1e-6
+
+        # Set time threshold to 10 ms
+        self.time_threshold = 1e-4
+
+        self.node_add = 0.2
 
     def read_iekf_states(self, filename):
         '''
@@ -189,6 +198,23 @@ class AUVGraphSLAM:
 
         self.depth_times = depth_time
         self.depth = depth
+
+    def read_dvl(self, filename):
+        '''
+        Read the state of the dvl sensor in relation to the Earth
+        '''
+        file_path = os.path.join(DATA_DIR, filename)
+
+        dvl_df = pd.read_csv(file_path)
+
+        dvl_time = dvl_df['%time'].values.astype(np.float64)
+        vx = dvl_df['field.velocityEarth0'].values.astype(np.float64)
+        vy = dvl_df['field.velocityEarth1'].values.astype(np.float64)
+        vz = dvl_df['field.velocityEarth2'].values.astype(np.float64)
+
+        self.dvl = np.vstack((vx, vy, vz))
+        self.dvl_times = dvl_time
+
     #####################################################################
     ###########################   Getters   #############################
     #####################################################################
@@ -234,11 +260,31 @@ class AUVGraphSLAM:
         depth = estimate.z()
         error = measurement - depth
         if jacobians is not None:
-            val = np.zeros((1,6))
-            val[2] = 1
+            val = np.zeros((1, 6))
+            val[0, 2] = 1
             jacobians[0] = val
         return error
-            
+
+    def velocity_error(self, measurement: np.ndarray, this: gtsam.CustomFactor, values: gtsam.Values, jacobians: Optional[List[np.ndarray]]) -> float:
+        '''
+        Calculate the error betwen the velocity prediction and the velocity measurement
+        '''
+        key = this.keys()[0]
+        estimate = values.atPoint3(key)
+        vx = estimate[0]
+        vy = estimate[1]
+        vz = estimate[2]
+        error = np.array(
+            [measurement[0,0] - vx, measurement[0,1] - vy, measurement[0,2] - vz])
+        if jacobians is not None:
+            val = np.zeros((3, 6))
+            val[:, 3:] = np.eye(3)
+            jacobians[0] = val
+        return error
+
+    #####################################################################
+    ####################   Graph  Initialization      ###################
+    #####################################################################
 
     def initialize(self):
         # Extract the data
@@ -249,7 +295,7 @@ class AUVGraphSLAM:
         self.read_state_times('state_times.csv')
         self.read_imu('full_dataset/imu_adis_ros.csv')
         self.read_depth_sensor('full_dataset/depth_sensor.csv')
-
+        self.read_dvl('full_dataset/dvl_linkquest.csv')
 
         state_step = self.state_times.shape[0]
 
@@ -257,8 +303,10 @@ class AUVGraphSLAM:
 
         # Iterate through values
         state_idx = 0
-        camera_idx = 0
+        node_idx = 0
         imu_idx = 0
+
+        initial_time = self.state_times[0]
 
         time_elapsed = 0
         total_time_elapsed = 0
@@ -274,14 +322,15 @@ class AUVGraphSLAM:
                 # Add prior to graph
                 self.graph.push_back(
                     gtsam.PriorFactorPose3(
-                        X(state_idx), state.pose(), self.priorNoise)
+                        X(node_idx), state.pose(), self.priorNoise)
                 )
                 self.graph.push_back(
                     gtsam.PriorFactorPoint3(
-                        V(state_idx), state.velocity(), self.velNoise)
+                        V(node_idx), state.velocity(), self.velNoise)
                 )
-                self.initial.insert(X(state_idx), state.pose())
-                self.initial.insert(V(state_idx), state.velocity())
+                self.initial.insert(X(node_idx), state.pose())
+                self.initial.insert(V(node_idx), state.velocity())
+                node_idx += 1
 
             dt = self.state_times[state_idx] - \
                 self.state_times[state_idx - 1]
@@ -312,47 +361,79 @@ class AUVGraphSLAM:
                     [mean_omegas[0], mean_omegas[1], mean_omegas[2]]).reshape(-1, 1)
                 measuredAcc = np.array(
                     [mean_lin_accs[0], mean_lin_accs[1], mean_lin_accs[2]]).reshape(-1, 1)
-                
-                # imu_dt = -1
-                # if imu_idx > 0:
-                #     imu_dt = self.imu_times[imu_idx] - \
-                #         self.imu_times[imu_idx - 1]
-                #     imu_dt *= 1e-9
-                #     if imu_dt < self.dt:
-                #         self.dt = imu_dt
-                # else:
-                #     imu_dt = self.dt
 
+                imu_dt = -1
+                if imu_idx > 0:
+                    imu_dt = self.imu_times[imu_idx] - \
+                        self.imu_times[imu_idx - 1]
+                    imu_dt *= 1e-9
+                    if imu_dt < self.dt:
+                        self.dt = imu_dt
+                else:
+                    imu_dt = self.dt
 
                 self.pim.integrateMeasurement(
                     measuredOmega, measuredAcc, self.dt)
                 imu_idx += 1
 
-            if time_elapsed > 2:
-                # Add factor at the time when a camera measurement is available
-                factor = gtsam.ImuFactor(X(camera_idx), V(camera_idx), X(
-                    camera_idx+1), V(camera_idx+1), BIAS_KEY, self.pim)
+            # Add after self.node_add seconds
+            if time_elapsed > self.node_add:
+                # Add an imu factor between the previous state and the current state
+                # +1 because the initial node
+                factor = gtsam.ImuFactor(X(node_idx - 1), V(node_idx - 1), X(
+                    node_idx), V(node_idx), BIAS_KEY, self.pim)
                 # print(f'factor: {factor}')
                 self.graph.add(factor)
 
+                # Add a depth factor between the previous state and the current state
+                # +1 because the initial node
+                # Find the closest time to the current time
+                depth_times = (self.depth_times - initial_time) * 1e-9
+                depth_idx = np.argmin(np.abs(depth_times - total_time_elapsed))
+                depth_time = depth_times[depth_idx]
+                depth_measurement = self.depth[depth_idx] * -1
+
+                # Compute difference between current time and depth time
+                depth_diff = abs(total_time_elapsed - depth_time)
+
+                if depth_diff < self.time_threshold:
+                    print(
+                        f'Below threshold for depth at time: {total_time_elapsed}!')
+                    depth_factor = gtsam.CustomFactor(
+                        self.depth_model, [
+                            X(node_idx+1)], partial(self.depth_error, np.array([depth_measurement]))
+                    )
+                    self.graph.add(depth_factor)
+
+                # Add a velocity factor between the previous state and the current state
+                # +1 because the initial node
+                # Find the closest time to the current time
+                dvl_times = (self.dvl_times - initial_time) * 1e-9
+                dvl_idx = np.argmin(np.abs(dvl_times - total_time_elapsed))
+                dvl_time = dvl_times[dvl_idx]
+                dvl_measurement = self.dvl[:, dvl_idx]
+
+                # Compute difference between current time and dvl time
+                dvl_diff = abs(total_time_elapsed - dvl_time)
+
+                if dvl_diff < self.time_threshold:
+                    print(
+                        f'Below threshold for dvl at time: {total_time_elapsed}!')
+                    dvl_factor = gtsam.CustomFactor(
+                        self.dvl_model, [
+                            V(node_idx+1)], partial(self.velocity_error, np.array([dvl_measurement]))
+                    )
+                    self.graph.add(dvl_factor)
+
                 self.pim.resetIntegration()
 
-                self.initial.insert(X(camera_idx+1), state.pose())
-                self.initial.insert(V(camera_idx+1), state.velocity())
+                self.initial.insert(X(node_idx), state.pose())
+                self.initial.insert(V(node_idx), state.velocity())
 
                 time_elapsed = 0
-                camera_idx += 1
+                node_idx += 1
 
             state_idx += 1
-
-        # self.graph.push_back(
-        #     gtsam.PriorFactorPose3(
-        #         X(camera_idx), state.pose(), self.priorNoise)
-        # )
-        # self.graph.push_back(
-        #     gtsam.PriorFactorPoint3(
-        #         V(camera_idx), state.velocity(), self.velNoise)
-        # )
 
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)
 
@@ -363,32 +444,48 @@ class AUVGraphSLAM:
         params = gtsam.LevenbergMarquardtParams()
         params.setVerbosityLM("SUMMARY")
         params.setMaxIterations(1000)
+        initial_error = self.graph.error(self.initial)
+
         optimizer = gtsam.LevenbergMarquardtOptimizer(
             self.graph, self.initial, params)
         # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
         self.result = optimizer.optimize()
         print('Optimization complete')
 
-
+        print(f'Initial error: {initial_error}')
+        print(f'Final error: {self.graph.error(self.result)}')
 
     def floating_mean(self, data, index, window):
         if index > window:
-            floating_mean = np.zeros_like(data[:,index])
+            floating_mean = np.zeros_like(data[:, index])
             for i in range(window):
-                floating_mean += data[:,(index-window+1+i)]
+                floating_mean += data[:, (index-window+1+i)]
             floating_mean = floating_mean/window
         else:
-            floating_mean = data[:,index]
+            floating_mean = data[:, index]
         return floating_mean
 
+    def plot_depth_values(self):
+        depth_values = self.depth
+        plt.plot((self.depth_times -
+                 self.depth_times[0])*1e-9, -1 * depth_values, '-x', label='Measured Depth')
+        plt.plot((self.state_times - self.state_times[0])*1e-9,
+                 self.states['z'], '-x', label='Estimated Depth')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Depth (m)')
+        plt.legend()
+        plt.show()
+
+        plt.plot(self.depth_times*1e-9)
+        plt.show()
 
     def plot_trajectories(self):
         '''
         Compare the trajectories
         '''
 
-        res_poses = np.zeros((self.initial.size() // 2, 3))
-        init_poses = np.zeros((self.initial.size() // 2, 3))
+        res_poses = np.zeros((self.initial.size() // 2, 6))
+        init_poses = np.zeros((self.initial.size() // 2, 6))
         j = 0
         for i in range(self.initial.size()):
             if X(i) in self.initial.keys():
@@ -396,27 +493,36 @@ class AUVGraphSLAM:
                 init_x = init_pose.x()
                 init_y = init_pose.y()
                 init_z = init_pose.z()
+                init_roll = init_pose.rotation().roll()
+                init_pitch = init_pose.rotation().pitch()
+                init_yaw = init_pose.rotation().yaw()
 
-                init_poses[j, :] = np.array([init_x, init_y, init_z])
+                init_poses[j, :] = np.array(
+                    [init_x, init_y, init_z, init_roll, init_pitch, init_yaw])
 
                 res_pose = self.result.atPose3(X(i))
                 res_x = res_pose.x()
                 res_y = res_pose.y()
                 res_z = res_pose.z()
+                res_roll = res_pose.rotation().roll()
+                res_pitch = res_pose.rotation().pitch()
+                res_yaw = res_pose.rotation().yaw()
 
-                res_poses[j, :] = np.array([res_x, res_y, res_z])
+                res_poses[j, :] = np.array(
+                    [res_x, res_y, res_z, res_roll, res_pitch, res_yaw])
+
                 j += 1
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         ax.plot(init_poses[:, 0], init_poses[:, 1],
                 init_poses[:, 2], label='Initial')
-        ax.scatter(init_poses[:, 0], init_poses[:, 1],
-                   init_poses[:, 2], c='b', marker='x')
+        # ax.scatter(init_poses[:, 0], init_poses[:, 1],
+        #            init_poses[:, 2], c='b', marker='x')
         ax.plot(res_poses[:, 0], res_poses[:, 1],
                 res_poses[:, 2], label='Result')
-        ax.scatter(res_poses[:, 0], res_poses[:, 1],
-                   res_poses[:, 2], c='r', marker='x')
+        # ax.scatter(res_poses[:, 0], res_poses[:, 1],
+        #            res_poses[:, 2], c='r', marker='x')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
@@ -424,19 +530,57 @@ class AUVGraphSLAM:
         plt.show()
 
         fig, axs = plt.subplots(1, 1)
-        axs.plot(init_poses[:, 0], init_poses[:,1], label='Initial')
-        axs.scatter(init_poses[:, 0], init_poses[:, 1], c = 'r', marker = 'x')
-        axs.plot(res_poses[:, 0], res_poses[:,1], label='Result')
-        axs.scatter(res_poses[:, 0], res_poses[:, 1], c = 'b', marker = 'x')
+        axs.plot(init_poses[:, 0], init_poses[:, 1], label='Initial')
+        axs.scatter(init_poses[:, 0], init_poses[:, 1], c='r', marker='x')
+        axs.plot(res_poses[:, 0], res_poses[:, 1], label='Result')
+        axs.scatter(res_poses[:, 0], res_poses[:, 1], c='b', marker='x')
         axs.set_xlabel('X (m)')
         axs.set_ylabel('Y (m)')
         axs.legend()
+        plt.show()
+
+        fig, axs = plt.subplots(3, 2)
+        axs[0, 0].plot(res_poses[:, 0], c='b', label='Result')
+        axs[0, 0].plot(init_poses[:, 0], c='r', label='Initial')
+        axs[0, 0].set_xlabel('Time')
+        axs[0, 0].set_ylabel('X (m)')
+        axs[0, 0].legend()
+
+        axs[1, 0].plot(res_poses[:, 1], c='b', label='Result')
+        axs[1, 0].plot(init_poses[:, 1], c='r', label='Initial')
+        axs[1, 0].set_xlabel('Time')
+        axs[1, 0].set_ylabel('Y (m)')
+        axs[1, 0].legend()
+
+        axs[2, 0].plot(res_poses[:, 2], c='b', label='Result')
+        axs[2, 0].plot(init_poses[:, 2], c='r', label='Initial')
+        axs[2, 0].set_xlabel('Time')
+        axs[2, 0].set_ylabel('Z (m)')
+        axs[2, 0].legend()
+
+        axs[0, 1].plot(res_poses[:, 3], c='b', label='Result')
+        axs[0, 1].plot(init_poses[:, 3], c='r', label='Initial')
+        axs[0, 1].set_xlabel('Time')
+        axs[0, 1].set_ylabel('Roll (rad)')
+        axs[0, 1].legend()
+
+        axs[1, 1].plot(res_poses[:, 4], c='b', label='Result')
+        axs[1, 1].plot(init_poses[:, 4], c='r', label='Initial')
+        axs[1, 1].set_xlabel('Time')
+        axs[1, 1].set_ylabel('Pitch (rad)')
+        axs[1, 1].legend()
+
+        axs[2, 1].plot(res_poses[:, 5], c='b', label='Result')
+        axs[2, 1].plot(init_poses[:, 5], c='r', label='Initial')
+        axs[2, 1].set_xlabel('Time')
+        axs[2, 1].set_ylabel('Yaw (rad)')
+        axs[2, 1].legend()
         plt.show()
 
 
 if __name__ == '__main__':
     GraphSLAM = AUVGraphSLAM()
     GraphSLAM.initialize()
+    # GraphSLAM.plot_depth_values()
     GraphSLAM.optimize()
     GraphSLAM.plot_trajectories()
-

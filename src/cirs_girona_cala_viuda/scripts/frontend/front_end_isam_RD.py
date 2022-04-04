@@ -24,7 +24,7 @@ class AUVGraphSLAM:
         '''
         Initialize the parameters and the initial state
         '''
-        self.graph = gtsam.NonlinearFactorGraph()
+        # self.graph = gtsam.NonlinearFactorGraph()
         acc_bias = np.array([0.067, 0.115, 0.320])
         gyro_bias = np.array([0.067, 0.115, 0.320])
         bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
@@ -34,8 +34,8 @@ class AUVGraphSLAM:
         self.pim = gtsam.PreintegratedImuMeasurements(
             self.params, bias)
 
-        self.initial = gtsam.Values()
-        self.initial.insert(BIAS_KEY, bias)
+        # self.initial = gtsam.Values()
+        # self.initial.insert(BIAS_KEY, bias)
 
         self.priorNoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
@@ -47,7 +47,7 @@ class AUVGraphSLAM:
         # Set time threshold to 10 ms
         self.time_threshold = 1e-3
 
-        self.node_add = 1
+        self.node_add = 0.25
 
     def read_comparison_slam(self, filename):
         '''
@@ -351,138 +351,155 @@ class AUVGraphSLAM:
 
         time_elapsed = 0
         total_time_elapsed = 0
+        isam = gtsam.ISAM2()
+
+        acc_bias = np.array([0.067, 0.115, 0.320])
+        gyro_bias = np.array([0.067, 0.115, 0.320])
 
         while state_idx < state_step:
             # Get the state
             # store as NavState or Pose3?
             # For now using NavState in order to use the imuPreintegrator
-
+            graph = gtsam.NonlinearFactorGraph()   # Initialize the graph
+            initial = gtsam.Values()
             state = self.getNavState(state_idx)
+            added = False
 
             if state_idx == 0:
                 # Add prior to graph
-                self.graph.push_back(
+                graph.push_back(
                     gtsam.PriorFactorPose3(
                         X(node_idx), state.pose(), self.priorNoise)
                 )
-                self.graph.push_back(
+                graph.push_back(
                     gtsam.PriorFactorPoint3(
                         V(node_idx), state.velocity(), self.velNoise)
                 )
-                self.initial.insert(X(node_idx), state.pose())
-                self.initial.insert(V(node_idx), state.velocity())
+
+                initial.insert(X(node_idx), state.pose())
+                initial.insert(V(node_idx), state.velocity())
+
+                bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
+                initial.insert(BIAS_KEY, bias)
                 node_idx += 1
-
-            dt = self.state_times[state_idx] - \
-                self.state_times[state_idx - 1]
-            if dt <= 0:
-                # Skip this state, means that the udate step is made in this step
-                state_idx += 1
-                continue
             else:
-                self.dt = dt * 1e-9
-                time_elapsed += self.dt
-                total_time_elapsed += self.dt
-            while self.state_times[state_idx] >= self.imu_times[imu_idx]:
-                # Get IMU measurements
-                omega_x = self.imu['omega_x']
-                omega_y = self.imu['omega_y']
-                omega_z = self.imu['omega_z']
-                lin_acc_x = self.imu['ax']
-                lin_acc_y = self.imu['ay']
-                lin_acc_z = self.imu['az']
 
-                omegas = np.array([omega_x, omega_y, omega_z])
-                lin_accs = np.array([lin_acc_x, lin_acc_y, lin_acc_z])
-
-                mean_omegas = self.floating_mean(omegas, imu_idx, 1)
-                mean_lin_accs = self.floating_mean(lin_accs, imu_idx, 1)
-
-                measuredOmega = np.array(
-                    [mean_omegas[0], mean_omegas[1], mean_omegas[2]]).reshape(-1, 1)
-                measuredAcc = np.array(
-                    [mean_lin_accs[0], mean_lin_accs[1], mean_lin_accs[2]]).reshape(-1, 1)
-
-                imu_dt = -1
-                if imu_idx > 0:
-                    imu_dt = self.imu_times[imu_idx] - \
-                        self.imu_times[imu_idx - 1]
-                    imu_dt *= 1e-9
-                    if imu_dt < self.dt:
-                        self.dt = imu_dt
+                dt = self.state_times[state_idx] - \
+                    self.state_times[state_idx - 1]
+                if dt <= 0:
+                # Skip this state, means that the udate step is made in this step
+                    state_idx += 1
+                    continue
                 else:
-                    imu_dt = self.dt
+                    self.dt = dt * 1e-9
+                    time_elapsed += self.dt # time elapsed from nodes
+                    total_time_elapsed += self.dt   # time elapsed from the beginning
+            
 
-                self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, self.dt)
-                imu_idx += 1
+                while self.state_times[state_idx] >= self.imu_times[imu_idx]:
+                    # Get IMU measurements
+                    omega_x = self.imu['omega_x'][imu_idx]
+                    omega_y = self.imu['omega_y'][imu_idx]
+                    omega_z = self.imu['omega_z'][imu_idx]
+                    lin_acc_x = self.imu['ax'][imu_idx]
+                    lin_acc_y = self.imu['ay'][imu_idx]
+                    lin_acc_z = self.imu['az'][imu_idx]
 
-            # Add after self.node_add seconds
-            if time_elapsed > self.node_add:
-                # Add an imu factor between the previous state and the current state
-                # +1 because the initial node
-                factor = gtsam.ImuFactor(X(node_idx - 1), V(node_idx - 1), X(
-                    node_idx), V(node_idx), BIAS_KEY, self.pim)
-                # print(f'factor: {factor}')
-                self.graph.add(factor)
+                    omegas = np.array([omega_x, omega_y, omega_z])
+                    lin_accs = np.array([lin_acc_x, lin_acc_y, lin_acc_z])
 
-                # Add a depth factor between the previous state and the current state
-                # +1 because the initial node
-                # Find the closest time to the current time
-                depth_times = (self.depth_times - initial_time) * 1e-9
-                depth_idx = np.argmin(np.abs(depth_times - total_time_elapsed))
-                depth_time = depth_times[depth_idx]
-                depth_measurement = self.depth[depth_idx] * -1
+                    # mean_omegas = self.floating_mean(omegas, imu_idx, 1)
+                    # mean_lin_accs = self.floating_mean(lin_accs, imu_idx, 1)
 
-                # Compute difference between current time and depth time
-                depth_diff = abs(total_time_elapsed - depth_time)
+                    measuredOmega = np.array(
+                        [omegas[0], omegas[1], omegas[2]]).reshape(-1, 1)
+                    measuredAcc = np.array(
+                        [lin_accs[0], lin_accs[1], lin_accs[2]]).reshape(-1, 1)
 
-                # if depth_diff < self.time_threshold:
-                #     # print(
-                #         # f'Below threshold for depth at time: {total_time_elapsed}!')
-                #     depth_factor = gtsam.CustomFactor(
-                #         self.depth_model, [
-                #             X(node_idx+1)], partial(self.depth_error, np.array([depth_measurement]))
-                #     )
-                #     self.graph.add(depth_factor)
+                    imu_dt = -1
+                    if imu_idx > 0:
+                        imu_dt = self.imu_times[imu_idx] - \
+                            self.imu_times[imu_idx - 1]
+                        imu_dt *= 1e-9
+                        if imu_dt < self.dt:
+                            self.dt = imu_dt
+                    else:
+                        imu_dt = self.dt
 
-                # Add a velocity factor between the previous state and the current state
-                # +1 because the initial node
-                # Find the closest time to the current time
-                dvl_times = (self.dvl_times - initial_time) * 1e-9
-                dvl_idx = np.argmin(np.abs(dvl_times - total_time_elapsed))
-                dvl_time = dvl_times[dvl_idx]
-                dvl_measurement = self.dvl[:, dvl_idx]
+                    self.pim.integrateMeasurement(
+                        measuredOmega, measuredAcc, self.dt)
+                    imu_idx += 1
 
-                # Compute difference between current time and dvl time
-                dvl_diff = abs(total_time_elapsed - dvl_time)
+                # Add after self.node_add seconds
+                if time_elapsed > self.node_add:
+                    print('added')
+                    added = True
+                    prevPose = result.atPose3(X(node_idx - 1))
+                    prevVel = result.atPoint3(V(node_idx - 1))
+                    initial.insert(X(node_idx), prevPose)
+                    initial.insert(V(node_idx), prevVel)
+                    # Add an imu factor between the previous state and the current state
+                    # +1 because the initial node
+                    #if node_idx == imu_idx:
+                    factor = gtsam.ImuFactor(X(node_idx - 1), V(node_idx - 1), X(       #edges
+                        node_idx), V(node_idx), BIAS_KEY, self.pim)
+                    # print(f'factor: {factor}')
+                    graph.add(factor)
+                    print('here')
+                    # Add a depth factor between the previous state and the current state
+                    # +1 because the initial node
+                    # Find the closest time to the current time
+                    # depth_times = (self.depth_times - initial_time) * 1e-9
+                    # depth_idx = np.argmin(np.abs(depth_times - total_time_elapsed))
+                    # depth_time = depth_times[depth_idx]
+                    # depth_measurement = self.depth[depth_idx] * -1
 
-                # if dvl_diff < self.time_threshold:
-                    # print(
-                        # f'Below threshold for dvl at time: {total_time_elapsed}!')
-                    # dvl_factor = gtsam.CustomFactor(
-                    #     self.dvl_model, [
-                    #         V(node_idx+1)], partial(self.velocity_error, np.array([dvl_measurement]))
-                    # )
-                    # self.graph.add(dvl_factor)
+                    # # Compute difference between current time and depth time
+                    # depth_diff = abs(total_time_elapsed - depth_time)
+
+                    # if depth_diff < self.time_threshold:
+                    #     # print(
+                    #         # f'Below threshold for depth at time: {total_time_elapsed}!')
+                    #     depth_factor = gtsam.CustomFactor(
+                    #         self.depth_model, [
+                    #             X(node_idx)], partial(self.depth_error, np.array([depth_measurement]))
+                    #     )
+                    #     graph.add(depth_factor)
+
+                    # Add a velocity factor between the previous state and the current state
+                    # +1 because the initial node
+                    # Find the closest time to the current time
+                    # dvl_times = (self.dvl_times - initial_time) * 1e-9
+                    # dvl_idx = np.argmin(np.abs(dvl_times - total_time_elapsed))
+                    # dvl_time = dvl_times[dvl_idx]
+                    # dvl_measurement = self.dvl[:, dvl_idx]
+
+                    # # Compute difference between current time and dvl time
+                    # dvl_diff = abs(total_time_elapsed - dvl_time)
+
+                    # if dvl_diff < self.time_threshold:
+                    #     print(
+                    #         f'Below threshold for dvl at time: {total_time_elapsed}!')
+                    #     dvl_factor = gtsam.CustomFactor(
+                    #         self.dvl_model, [
+                    #             V(node_idx)], partial(self.velocity_error, np.array([dvl_measurement]))
+                    #         )
+                    #     graph.add(dvl_factor)
 
                 
-                # Add an odometry factor between the previous state and the current state
-                # +1 because the initial node
-                # # Find the closest time to the current time
-                    # self.graph.add(odometry_factor)
+                    # Add an odometry factor between the previous state and the current state
+                    # +1 because the initial node
+                    # # Find the closest time to the current time
+                        # self.graph.add(odometry_factor)
+                    self.pim.resetIntegration()
+                    time_elapsed = 0
+                    node_idx += 1
 
-
-                self.pim.resetIntegration()
-
-                self.initial.insert(X(node_idx), state.pose())
-                self.initial.insert(V(node_idx), state.velocity())
-
-                time_elapsed = 0
-                node_idx += 1
-
+            if added or state_idx == 0:
+                isam.update(graph, initial)
+                result = isam.calculateEstimate()
             state_idx += 1
-
+        return result
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)
 
         print('Initialization complete')
@@ -495,7 +512,7 @@ class AUVGraphSLAM:
         initial_error = self.graph.error(self.initial)
 
         optimizer = gtsam.LevenbergMarquardtOptimizer(
-            self.graph, self.initial)
+            self.graph, self.initial, params)
         # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
         self.result = optimizer.optimize()
         print('Optimization complete')
@@ -527,7 +544,7 @@ class AUVGraphSLAM:
         plt.plot(self.depth_times*1e-9)
         plt.show()
 
-    def plot_trajectories(self):
+    def plot_trajectories(self,result):
         '''
         Compare the trajectories
         '''
@@ -550,7 +567,7 @@ class AUVGraphSLAM:
                 init_poses[j, :] = np.array(
                     [init_x, init_y, init_z, init_roll, init_pitch, init_yaw])
 
-                res_pose = self.result.atPose3(X(i))
+                res_pose = result.atPose3(X(i))
                 res_x = res_pose.x()
                 res_y = res_pose.y()
                 res_z = res_pose.z()
@@ -635,7 +652,7 @@ class AUVGraphSLAM:
 
 if __name__ == '__main__':
     GraphSLAM = AUVGraphSLAM()
-    GraphSLAM.initialize()
+    result = GraphSLAM.initialize()
     # GraphSLAM.plot_depth_values()
-    GraphSLAM.optimize()
-    GraphSLAM.plot_trajectories()
+    #GraphSLAM.optimize()
+    GraphSLAM.plot_trajectories(result)

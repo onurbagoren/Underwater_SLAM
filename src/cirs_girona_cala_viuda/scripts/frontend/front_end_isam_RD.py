@@ -362,8 +362,10 @@ class AUVGraphSLAM:
             # For now using NavState in order to use the imuPreintegrator
             graph = gtsam.NonlinearFactorGraph()   # Initialize the graph
             initial = gtsam.Values()
+            #bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
+            #initial.insert(BIAS_KEY, bias)
             state = self.getNavState(state_idx)
-            added = False
+            #added = False
 
             if state_idx == 0:
                 # Add prior to graph
@@ -375,12 +377,11 @@ class AUVGraphSLAM:
                     gtsam.PriorFactorPoint3(
                         V(node_idx), state.velocity(), self.velNoise)
                 )
-
+                bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
+                initial.insert(BIAS_KEY, bias)
                 initial.insert(X(node_idx), state.pose())
                 initial.insert(V(node_idx), state.velocity())
 
-                bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-                initial.insert(BIAS_KEY, bias)
                 node_idx += 1
             else:
 
@@ -432,12 +433,9 @@ class AUVGraphSLAM:
 
                 # Add after self.node_add seconds
                 if time_elapsed > self.node_add:
-                    print('added')
-                    added = True
-                    prevPose = result.atPose3(X(node_idx - 1))
-                    prevVel = result.atPoint3(V(node_idx - 1))
-                    initial.insert(X(node_idx), prevPose)
-                    initial.insert(V(node_idx), prevVel)
+                    #print('added')
+                    #added = True
+
                     # Add an imu factor between the previous state and the current state
                     # +1 because the initial node
                     #if node_idx == imu_idx:
@@ -445,7 +443,7 @@ class AUVGraphSLAM:
                         node_idx), V(node_idx), BIAS_KEY, self.pim)
                     # print(f'factor: {factor}')
                     graph.add(factor)
-                    print('here')
+                    #print('here')
                     # Add a depth factor between the previous state and the current state
                     # +1 because the initial node
                     # Find the closest time to the current time
@@ -492,12 +490,20 @@ class AUVGraphSLAM:
                     # # Find the closest time to the current time
                         # self.graph.add(odometry_factor)
                     self.pim.resetIntegration()
+
+                    prevPose = result.atPose3(X(node_idx - 1))
+                    prevVel = result.atPoint3(V(node_idx - 1))
+                    #bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
+                    #initial.insert(BIAS_KEY, bias)
+                    initial.insert(X(node_idx), prevPose)
+                    initial.insert(V(node_idx), prevVel)
+                    
                     time_elapsed = 0
                     node_idx += 1
 
-            if added or state_idx == 0:
-                isam.update(graph, initial)
-                result = isam.calculateEstimate()
+            #if added or state_idx == 0:
+            isam.update(graph, initial)
+            result = isam.calculateEstimate()
             state_idx += 1
         return result
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)

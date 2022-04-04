@@ -45,7 +45,7 @@ class AUVGraphSLAM:
         self.dt = 1e-6
 
         # Set time threshold to 10 ms
-        self.time_threshold = 1e-3
+        self.time_threshold = 1e-4
 
         self.node_add = 1
 
@@ -301,7 +301,7 @@ class AUVGraphSLAM:
         error = measurement - depth
         if jacobians is not None:
             val = np.zeros((1, 6))
-            val[0, 2] = 1
+            val[0, -1] = 1
             jacobians[0] = val
         return error
 
@@ -317,8 +317,8 @@ class AUVGraphSLAM:
         error = np.array(
             [measurement[0, 0] - vx, measurement[0, 1] - vy, measurement[0, 2] - vz])
         if jacobians is not None:
-            val = np.zeros((3, 6))
-            val[:, 3:] = np.eye(3)
+            val = np.eye(3)
+            # val[:, -3:] = np.eye(3)
             jacobians[0] = val
         return error
 
@@ -414,7 +414,7 @@ class AUVGraphSLAM:
                     imu_dt = self.dt
 
                 self.pim.integrateMeasurement(
-                    measuredOmega, measuredAcc, self.dt)
+                    measuredOmega, measuredAcc, imu_dt)
                 imu_idx += 1
 
             # Add after self.node_add seconds
@@ -442,7 +442,7 @@ class AUVGraphSLAM:
                         # f'Below threshold for depth at time: {total_time_elapsed}!')
                     depth_factor = gtsam.CustomFactor(
                         self.depth_model, [
-                            X(node_idx+1)], partial(self.depth_error, np.array([depth_measurement]))
+                            X(node_idx)], partial(self.depth_error, np.array([depth_measurement]))
                     )
                     self.graph.add(depth_factor)
 
@@ -462,7 +462,7 @@ class AUVGraphSLAM:
                         # f'Below threshold for dvl at time: {total_time_elapsed}!')
                     dvl_factor = gtsam.CustomFactor(
                         self.dvl_model, [
-                            V(node_idx+1)], partial(self.velocity_error, np.array([dvl_measurement]))
+                            V(node_idx)], partial(self.velocity_error, np.array([dvl_measurement]))
                     )
                     self.graph.add(dvl_factor)
 
@@ -591,10 +591,15 @@ class AUVGraphSLAM:
                 res_poses[:, 2], label='Result')
         # ax.scatter(res_poses[:, 0], res_poses[:, 1],
         #            res_poses[:, 2], c='r', marker='x')
+        ax.plot(self.asekf_slam[:, 0], self.asekf_slam[:, 1],
+                self.asekf_slam[:, 2], label='ASEKF')
+        # ax.plot(self.odom[0, :], self.odom[1, :],
+        #         self.odom[2, :], label='Odometry')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
         ax.legend()
+        plt.savefig(f'{sys.path[0]}/../images/all_sensors/3d_trajectories.png')
         plt.show()
 
         fig, axs = plt.subplots(1, 1)
@@ -605,6 +610,7 @@ class AUVGraphSLAM:
         axs.set_xlabel('X (m)')
         axs.set_ylabel('Y (m)')
         axs.legend()
+        plt.savefig(f'{sys.path[0]}/../images/all_sensors/2d_trajectories.png')
         plt.show()
 
         fig, axs = plt.subplots(3, 2)
@@ -648,6 +654,7 @@ class AUVGraphSLAM:
         axs[2, 1].set_xlabel('Time')
         axs[2, 1].set_ylabel('Yaw (rad)')
         axs[2, 1].legend()
+        plt.savefig(f'{sys.path[0]}/../images/all_sensors/marginals.png')
         plt.show()
 
 

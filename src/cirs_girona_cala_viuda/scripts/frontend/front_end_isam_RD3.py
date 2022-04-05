@@ -11,6 +11,12 @@ from gtsam.symbol_shorthand import B, V, X
 from typing import Optional, List
 import csv
 
+from gtsam import (ISAM2, BetweenFactorConstantBias, Cal3_S2,
+                   ConstantTwistScenario, ImuFactor, NonlinearFactorGraph,
+                   PinholeCameraCal3_S2, Point3, Pose3,
+                   PriorFactorConstantBias, PriorFactorPose3,
+                   PriorFactorVector, Rot3, Values)
+
 from scipy.spatial.transform import Rotation as R
 
 from mpl_toolkits.mplot3d import Axes3D
@@ -24,18 +30,6 @@ class AUVGraphSLAM:
         '''
         Initialize the parameters and the initial state
         '''
-        # self.graph = gtsam.NonlinearFactorGraph()
-        acc_bias = np.array([0.067, 0.115, 0.320])
-        gyro_bias = np.array([0.067, 0.115, 0.320])
-        bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-
-        self.params = gtsam.PreintegrationParams.MakeSharedU(9.81)
-
-        self.pim = gtsam.PreintegratedImuMeasurements(
-            self.params, bias)
-
-        # self.initial = gtsam.Values()
-        # self.initial.insert(BIAS_KEY, bias)
 
         self.priorNoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
@@ -329,6 +323,32 @@ class AUVGraphSLAM:
             val[:, 3:] = np.eye(3)
             jacobians[0] = val
         return error
+        
+    def vector3(x, y, z):
+        """Create 3d double numpy array."""
+        return np.array([x, y, z], dtype=float)
+
+
+    g = 9.81
+    n_gravity = vector3(0, 0, -g)
+
+
+    def preintegration_parameters():
+        # IMU preintegration parameters
+        # Default Params for a Z-up navigation frame, such as ENU: gravity points along negative Z-axis
+        PARAMS = gtsam.PreintegrationParams.MakeSharedU(g)
+        I = np.eye(3)
+        PARAMS.setAccelerometerCovariance(I * 0.1)
+        PARAMS.setGyroscopeCovariance(I * 0.1)
+        PARAMS.setIntegrationCovariance(I * 0.1)
+        PARAMS.setUse2ndOrderCoriolis(False)
+        PARAMS.setOmegaCoriolis(vector3(0, 0, 0))
+
+        BIAS_COVARIANCE = gtsam.noiseModel.Isotropic.Variance(6, 0.1)
+        DELTA = Pose3(Rot3.Rodrigues(0, 0, 0),
+                  Point3(0.05, -0.10, 0.20))
+
+        return PARAMS, BIAS_COVARIANCE, DELTA
 
     #####################################################################
     ####################   Graph  Initialization      ###################
@@ -344,186 +364,92 @@ class AUVGraphSLAM:
         self.read_imu('full_dataset/imu_adis.csv')
         self.read_depth_sensor('full_dataset/depth_sensor.csv')
         self.read_dvl('full_dataset/dvl_linkquest.csv')
-        # self.read_odom('full_dataset/odometry.csv')
 
-        state_step = self.state_times.shape[0]
+        PARAMS, BIAS_COVARIANCE, DELTA = self.preintegration_parameters()
 
-        # Initialize IMU preintegrator
+        # Create a factor graph
+        graph = NonlinearFactorGraph()
 
-        # Iterate through values
-        state_idx = 0
-        node_idx = 0
-        imu_idx = 0
+        # Create (incremental) ISAM2 solver
+        isam = ISAM2()
 
-        initial_time = self.state_times[0]
+        # Create the initial estimate to the solution
+        # Intentionally initialize the variables off from the ground truth
+        initialEstimate = Values()
+        # Add a prior on pose x0. This indirectly specifies where the origin is.
+        # 30cm std on x,y,z 0.1 rad on roll,pitch,yaw
+        state_init = self.getNavState(0)
+        pose_0 = state_init.pose()
+        noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.1, 0.1, 0.1, 0.3, 0.3, 0.3]))
+        graph.push_back(PriorFactorPose3(X(0), pose_0, noise))
 
-        time_elapsed = 0
-        total_time_elapsed = 0
-        isam = gtsam.ISAM2()
+        # Add imu priors
+        biasKey = B(0)
+        biasnoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
+        biasprior = PriorFactorConstantBias(biasKey, gtsam.imuBias.ConstantBias(),
+                                        biasnoise)
+        graph.push_back(biasprior)
+        initialEstimate.insert(biasKey, gtsam.imuBias.ConstantBias())
+        velnoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
 
-        acc_bias = np.array([0.067, 0.115, 0.320])
-        gyro_bias = np.array([0.067, 0.115, 0.320])
+        # Calculate with correct initial velocity
+       
+        velprior = PriorFactorVector(V(0), state_init.velocity(), velnoise)
+        graph.push_back(velprior)
+        initialEstimate.insert(V(0), state_init.velocity())
 
-        while state_idx < state_step:
-            # Get the state
-            # store as NavState or Pose3?
-            # For now using NavState in order to use the imuPreintegrator
-            graph = gtsam.NonlinearFactorGraph()   # Initialize the graph
-            initial = gtsam.Values()
-            #bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-            #initial.insert(BIAS_KEY, bias)
-            state = self.getNavState(state_idx)
-            #added = False
+        accum = gtsam.PreintegratedImuMeasurements(PARAMS)
+        delta_t = 1.0/18  # makes for 10 degrees per step
 
-            if state_idx == 0:
-                bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)      # Zero Bias
-                # Add prior to graph
-                graph.push_back(
-                    gtsam.PriorFactorPose3(
-                        X(node_idx), state.pose(), self.priorNoise)
-                )
-                graph.push_back(
-                    gtsam.PriorFactorPoint3(
-                        V(node_idx), state.velocity(), self.velNoise)
-                )
-                graph.push_back(                                        ## Check this
-                    gtsam.addPriorContstantBias(
-                        B(node_idx), bias, self.biasNoise)
-                )
-                
-                initial.insert(B(node_idx), bias)
-                initial.insert(X(node_idx), state.pose())
-                initial.insert(V(node_idx), state.velocity())
+        # Simulate poses and imu measurements, adding them to the factor graph
+        for i in range(80):
+            t = i * delta_t  # simulation time
+            if i == 0:  # First time add two poses
+                pose_1 =  self.getNavState(delta_t).pose()    
+                initialEstimate.insert(X(0), pose_0.compose(DELTA))
+                initialEstimate.insert(X(1), pose_1.compose(DELTA))
+            elif i >= 2:  # Add more poses as necessary
+                pose_i = self.getNavState(t).pose()
+                initialEstimate.insert(X(i), pose_i.compose(DELTA))
 
-                node_idx += 1
-            else:
-
-                dt = self.state_times[state_idx] - \
-                    self.state_times[state_idx - 1]
-                if dt <= 0:
-                # Skip this state, means that the udate step is made in this step
-                    state_idx += 1
-                    continue
-                else:
-                    self.dt = dt * 1e-9
-                    time_elapsed += self.dt # time elapsed from nodes
-                    total_time_elapsed += self.dt   # time elapsed from the beginning
-            
-
-                while self.state_times[state_idx] >= self.imu_times[imu_idx]:
-                    # Get IMU measurements
-                    omega_x = self.imu['omega_x'][imu_idx]
-                    omega_y = self.imu['omega_y'][imu_idx]
-                    omega_z = self.imu['omega_z'][imu_idx]
-                    lin_acc_x = self.imu['ax'][imu_idx]
-                    lin_acc_y = self.imu['ay'][imu_idx]
-                    lin_acc_z = self.imu['az'][imu_idx]
-                    bias_x = self.imu['bx'][imu_idx]
-                    bias_y = self.imu['by'][imu_idx]
-                    bias_z = self.imu['bz'][imu_idx]
-
-                    omegas = np.array([omega_x, omega_y, omega_z])
-                    lin_accs = np.array([lin_acc_x, lin_acc_y, lin_acc_z])
-                    biases = np.array([bias_x, bias_y, bias_z])
-
-                    # mean_omegas = self.floating_mean(omegas, imu_idx, 1)
-                    # mean_lin_accs = self.floating_mean(lin_accs, imu_idx, 1)
-
-                    measuredOmega = np.array(
-                        [omegas[0], omegas[1], omegas[2]]).reshape(-1, 1)
-                    measuredAcc = np.array(
-                        [lin_accs[0], lin_accs[1], lin_accs[2]]).reshape(-1, 1)
-
-                    imu_dt = -1
-                    if imu_idx > 0:
-                        imu_dt = self.imu_times[imu_idx] - \
-                            self.imu_times[imu_idx - 1]
-                        imu_dt *= 1e-9
-                        if imu_dt < self.dt:
-                            self.dt = imu_dt
-                    else:
-                        imu_dt = self.dt
-
-                    self.pim.integrateMeasurement(
-                        measuredOmega, measuredAcc, self.dt)
-                    imu_idx += 1
-
-                # Add after self.node_add seconds
-                if time_elapsed > self.node_add:
-                    #print('added')
-                    #added = True
-
-                    # Add an imu factor between the previous state and the current state
-                    # +1 because the initial node
-                    #if node_idx == imu_idx:
-                    prev_bias_key = B(node_idx-1)          #BIAS_KEY
-                    factor = gtsam.ImuFactor(X(node_idx - 1), V(node_idx - 1), X(       #edges
-                        node_idx), V(node_idx), prev_bias_key, self.pim)
-                    # print(f'factor: {factor}')
+            if i > 0:
+                # Add Bias variables periodically
+                if i % 5 == 0:
+                    biasKey += 1
+                    factor = BetweenFactorConstantBias(
+                        biasKey - 1, biasKey, gtsam.imuBias.ConstantBias(), BIAS_COVARIANCE)
                     graph.add(factor)
-                    #print('here')
-                    # Add a depth factor between the previous state and the current state
-                    # +1 because the initial node
-                    # Find the closest time to the current time
-                    # depth_times = (self.depth_times - initial_time) * 1e-9
-                    # depth_idx = np.argmin(np.abs(depth_times - total_time_elapsed))
-                    # depth_time = depth_times[depth_idx]
-                    # depth_measurement = self.depth[depth_idx] * -1
+                    initialEstimate.insert(biasKey, gtsam.imuBias.ConstantBias())
 
-                    # # Compute difference between current time and depth time
-                    # depth_diff = abs(total_time_elapsed - depth_time)
+                # Predict acceleration and gyro measurements in (actual) body frame
+                nRb = scenario.rotation(t).matrix()
+                bRn = np.transpose(nRb)
+                measuredAcc = scenario.acceleration_b(t) - np.dot(bRn, n_gravity)
+                measuredOmega = scenario.omega_b(t)
+                accum.integrateMeasurement(measuredAcc, measuredOmega, delta_t)
 
-                    # if depth_diff < self.time_threshold:
-                    #     # print(
-                    #         # f'Below threshold for depth at time: {total_time_elapsed}!')
-                    #     depth_factor = gtsam.CustomFactor(
-                    #         self.depth_model, [
-                    #             X(node_idx)], partial(self.depth_error, np.array([depth_measurement]))
-                    #     )
-                    #     graph.add(depth_factor)
+                # Add Imu Factor
+                imufac = ImuFactor(X(i - 1), V(i - 1), X(i), V(i), biasKey, accum)
+                graph.add(imufac)
 
-                    # Add a velocity factor between the previous state and the current state
-                    # +1 because the initial node
-                    # Find the closest time to the current time
-                    # dvl_times = (self.dvl_times - initial_time) * 1e-9
-                    # dvl_idx = np.argmin(np.abs(dvl_times - total_time_elapsed))
-                    # dvl_time = dvl_times[dvl_idx]
-                    # dvl_measurement = self.dvl[:, dvl_idx]
+                # insert new velocity, which is wrong
+                initialEstimate.insert(V(i), n_velocity)
+                accum.resetIntegration()
 
-                    # # Compute difference between current time and dvl time
-                    # dvl_diff = abs(total_time_elapsed - dvl_time)
-
-                    # if dvl_diff < self.time_threshold:
-                    #     print(
-                    #         f'Below threshold for dvl at time: {total_time_elapsed}!')
-                    #     dvl_factor = gtsam.CustomFactor(
-                    #         self.dvl_model, [
-                    #             V(node_idx)], partial(self.velocity_error, np.array([dvl_measurement]))
-                    #         )
-                    #     graph.add(dvl_factor)
-
-                
-                    # Add an odometry factor between the previous state and the current state
-                    # +1 because the initial node
-                    # # Find the closest time to the current time
-                        # self.graph.add(odometry_factor)
-                    self.pim.resetIntegration()
-
-                    prevPose = result.atPose3(X(node_idx - 1))
-                    prevVel = result.atPoint3(V(node_idx - 1))
-                    #bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-                    #initial.insert(BIAS_KEY, bias)
-                    initial.insert(X(node_idx), prevPose)
-                    initial.insert(V(node_idx), prevVel)
-                    
-                    time_elapsed = 0
-                    node_idx += 1
-
-            #if added or state_idx == 0:
-            isam.update(graph, initial)
+            # Incremental solution
+            isam.update(graph, initialEstimate)
             result = isam.calculateEstimate()
-            state_idx += 1
-        return result
+            plot.plot_incremental_trajectory(0, result,
+                                         start=i, scale=3, time_interval=0.01)
+
+            # reset
+            graph = NonlinearFactorGraph()
+            initialEstimate.clear()
+
+        plt.show()
+
+        return isam
         self.graph.saveGraph(f'{sys.path[0]}/graph.dot', self.initial)
 
         print('Initialization complete')
@@ -676,7 +602,7 @@ class AUVGraphSLAM:
 
 if __name__ == '__main__':
     GraphSLAM = AUVGraphSLAM()
-    result = GraphSLAM.initialize()
+    GraphSLAM.initialize()
     # GraphSLAM.plot_depth_values()
     #GraphSLAM.optimize()
-    GraphSLAM.plot_trajectories(result)
+    #GraphSLAM.plot_trajectories(result)

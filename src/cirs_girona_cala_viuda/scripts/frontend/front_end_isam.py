@@ -10,18 +10,15 @@ from typing import Optional, List
 
 from dataloader import *
 
-BIAS_KEY = B(0)
-
-
 class AUViSAM:
     def __init__(self):
-        '''
+        """
         The nodes on the graph will be gtsam.NavState, which is essentially a
         SE_2(3) lie group representation of the state of the vehicle.
 
-        For this script, will be testing out the use of the IMU, depth sensor, 
+        For this script, will be testing out the use of the IMU, depth sensor,
         odometry, and velocity logger.
-        '''
+        """
 
         # Initialization of some parameters
         self.dt = 1e-6
@@ -32,19 +29,40 @@ class AUViSAM:
         acc_bias = np.array([0.067, 0.115, 0.320])
         gyro_bias = np.array([0.067, 0.115, 0.320])
         bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-        self.params = gtsam.PreintegrationParams.MakeSharedU(9.81)
-        self.pim = gtsam.PreintegratedImuMeasurements(
-            self.params, bias)
+
+        self.preintegration_parameters()
+
+        self.pim = gtsam.PreintegratedImuMeasurements(self.params, bias)
 
         # Load data
-        self.iekf_states = read_iekf_states('states.csv')
-        self.iekf_times = read_state_times('state_times.csv')
-        self.imu_times, self.imu = read_imu('full_dataset/imu_adis_ros.csv')
+        self.iekf_states = read_iekf_states("states.csv")
+        self.iekf_times = read_state_times("state_times.csv")
+        self.imu_times, self.imu = read_imu("full_dataset/imu_adis.csv")
         self.depth_times, self.depth = read_depth_sensor(
-            'full_dataset/depth_sensor.csv')
+            "full_dataset/depth_sensor.csv"
+        )
+
+    # Setters
+
+    def preintegration_parameters(self):
+        """
+        Set the parameters for the preintegration
+        """
+        self.params = gtsam.PreintegrationParams.MakeSharedU(9.81)
+        I = np.eye(3)
+        self.params.setAccelerometerCovariance(I * 0.1)
+        self.params.setGyroscopeCovariance(I * 0.1)
+        self.params.setIntegrationCovariance(I * 0.1)
+        self.params.setOmegaCoriolis(np.zeros(3))
+
+        self.bias_cov = gtsam.noiseModel.Isotropic.Variance(6, 0.1)
+
+        self.delta = Pose3(Rot3.Rodrigues(0, 0, 0), Point3(0.05, -0.10, 0.20))
+
+    # Getters
 
     def get_nav_state(self, time):
-        '''
+        """
         Get the state from the Invariant EKF at time "time" and store
         as a gtsam.NavState to initialize values and/or set nodes in the graph
 
@@ -57,16 +75,16 @@ class AUViSAM:
         =======
         nav_state: gtsam.NavState
             The state at time "time"
-        '''
-        x = self.iekf_states['x'][time]
-        y = self.iekf_states['y'][time]
-        z = self.iekf_states['z'][time]
-        u = self.iekf_states['u'][time]
-        v = self.iekf_states['v'][time]
-        r = self.iekf_states['r'][time]
-        phi = self.iekf_states['phi'][time]
-        theta = self.iekf_states['theta'][time]
-        psi = self.iekf_states['psi'][time]
+        """
+        x = self.iekf_states["x"][time]
+        y = self.iekf_states["y"][time]
+        z = self.iekf_states["z"][time]
+        u = self.iekf_states["u"][time]
+        v = self.iekf_states["v"][time]
+        r = self.iekf_states["r"][time]
+        phi = self.iekf_states["phi"][time]
+        theta = self.iekf_states["theta"][time]
+        psi = self.iekf_states["psi"][time]
 
         # Think this is the correct way to do it
         # TODO: is this the correct way to do it?
@@ -82,151 +100,115 @@ class AUViSAM:
         state = NavState(pose, v)
         return state
 
-    def depth_error(self, 
-                measurement: np.ndarray, 
-                this: gtsam.CustomFactor, 
-                values: gtsam.Values, 
-                jacobians: Optional[List[np.ndarray]]) -> float:
-        '''
-        Calculate the error between the odometry measurement and the odometry 
-        prediction
-        '''
+    def depth_error(
+        self,
+        measurement: np.ndarray,
+        this: gtsam.CustomFactor,
+        values: gtsam.Values,
+        jacobians: Optional[List[np.ndarray]],
+    ) -> float:
+        """
+        Calculate the error betwen the depth sensor and the depth prediction
+        """
+        # Measurement is >0, meaning that it should be inverted
+        assert measurement <= 0, "Measurement should be negative"
         key = this.keys()[0]
-        estimate = values.Pose3(key)
-        error = measurement - estimate.z()
+        estimate = values.atPose3(key)
+        depth = estimate.z()
+        error = measurement - depth
         if jacobians is not None:
             val = np.zeros((1, 6))
-            val[0, 2] = 1
+            val[0, -1] = 1
             jacobians[0] = val
         return error
 
+    def velocity_error(
+        self,
+        measurement: np.ndarray,
+        this: gtsam.CustomFactor,
+        values: gtsam.Values,
+        jacobians: Optional[List[np.ndarray]],
+    ) -> float:
+        """
+        Calculate the error betwen the velocity prediction and the velocity measurement
+        """
+        key = this.keys()[0]
+        vel_estimate = values.atPoint3(V(key))
+        pose_estimate = values.atPose3(X(key))
+
+        rot_mat = pose_estimate.rotation().matrix()
+        vx = vel_estimate[0]
+        vy = vel_estimate[1]
+        vz = vel_estimate[2]
+        v = np.array([vx, vy, vz]).reshape((3, 1))
+
+        meas_t = measurement.T
+        meas_world = rot_mat @ meas_t
+
+        error = np.array(
+            [
+                meas_world[0, 0] - v[0, 0],
+                meas_world[1, 0] - v[1, 0],
+                meas_world[2, 0] - v[2, 0],
+            ]
+        )
+        if jacobians is not None:
+            jacobians[0] = rot_mat
+        return error
+
     def iSAM(self):
-        '''
+        """
         Optimize over the graph after each new observation is taken
 
         TODO: Test with only a few states at first
-        '''
-        isam = gtsam.ISAM2()
+        """
 
+        # Initialize a bunch of things
+        isam = gtsam.ISAM2()
+        graph = gtsam.NonlinearFactorGraph()
+        initial = gtsam.Values()
+
+        # Initialize the indices of the sensors to keep track of
         state_idx = 0
         depth_idx = 0
         imu_idx = 0
 
+
+        # Keep track of the time 
         time_elapsed = 0
         imu_time_elapsed = 0
 
-        graph = gtsam.NonlinearFactorGraph()
-        initial = gtsam.Values()
-        while state_idx < 10:
+        # Define how many steps to take
+        state_step = self.iekf_times.shape[0]
+
+        while state_idx < state_step:
             state = self.get_nav_state(state_idx)
+
             if state_idx == 0:
-                # Add prior to the graph
+                # Add prior to the graph at time 0
                 priorPoseFactor = gtsam.PriorFactorPose3(
-                    X(state_idx), state.pose(), self.priorNoise)
+                    X(state_idx), state.pose(), self.priorNoise
+                )
                 graph.add(priorPoseFactor)
 
                 priorVelFactor = gtsam.PriorFactorPoint3(
-                    V(state_idx), state.velocity(), self.velNoise)
+                    V(state_idx), state.velocity(), self.velNoise
+                )
                 graph.add(priorVelFactor)
 
                 # Add values
                 initial.insert(X(state_idx), state.pose())
                 initial.insert(V(state_idx), state.velocity())
-
-                # IMU information
-                acc_bias = np.array([0.067, 0.115, 0.320])
-                gyro_bias = np.array([0.067, 0.115, 0.320])
-                bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
-                initial.insert(BIAS_KEY, bias)
             else:
-                # Compute time difference between states
-                dt = self.iekf_times[state_idx] - \
-                    self.iekf_times[state_idx - 1]
-                dt *= 1e-9
-                if dt <= 0:
-                    state_idx += 1
-                    continue
-
-                # prev_state = self.get_nav_state(state_idx - 1)
-                # initial.insert(X(state_idx), prev_state.pose())
-                # initial.insert(V(state_idx), prev_state.velocity())
-
-                # Find the lower time between depth, state and IMU
-                sensor_time = -1
-                imu_time = self.imu_times[imu_idx]
-                depth_time = self.depth_times[depth_idx]
-                if imu_time < depth_time:
-                    sensor_time = imu_time * 1e-18
-                    sensor_type = 'imu'
-                else:
-                    sensor_time = depth_time * 1e-18
-                    sensor_type = 'depth'
-                state_time = self.iekf_times[state_idx] * 1e-18
-                print(f'State time: {state_time}')
-
-                while state_time > sensor_time:
-                    if sensor_type == 'imu':
-                        omega_x = self.imu['omega_x'][imu_idx]
-                        omega_y = self.imu['omega_y'][imu_idx]
-                        omega_z = self.imu['omega_z'][imu_idx]
-                        lin_acc_x = self.imu['ax'][imu_idx]
-                        lin_acc_y = self.imu['ay'][imu_idx]
-                        lin_acc_z = self.imu['az'][imu_idx]
-
-                        measuredOmega = np.array(
-                            [omega_x, omega_y, omega_z]).reshape(-1, 1)
-                        measuredAcc = np.array(
-                            [lin_acc_x, lin_acc_y, lin_acc_z]).reshape(-1, 1)
-
-                        print(f'\tIMU time: {self.imu_times[imu_idx]*1e-18}')
-
-                        if imu_idx > 0:
-                            imu_dt = self.imu_times[imu_idx] - \
-                                self.imu_times[imu_idx - 1]
-                            imu_dt *= 1e-9
-                        else:
-                            imu_dt = self.iekf_times[state_idx] - \
-                                self.iekf_times[state_idx - 1]
-
-                        self.pim.integrateMeasurement(
-                            measuredOmega, measuredAcc, imu_dt)
-
-                        imu_idx += 1
-                    elif sensor_type == 'depth':
-                        print(
-                            f'\tDepth time: {self.depth_times[depth_idx]*1e-18}')
-                        depth = self.depth[depth_idx]
-                        depth_model = gtsam.noiseModel.Isotropic.Sigma(1, 0.01)
-                        depth_factor = gtsam.CustomFactor(
-                            depth_model, [X(depth_idx)], partial(self.depth_error, np.array([-1 * depth])))
-                        print(depth_idx)
-                        imu_factor = gtsam.ImuFactor(X(depth_idx), V(depth_idx), X(depth_idx + 1), V(depth_idx + 1), BIAS_KEY, self.pim)
-
-                        graph.add(depth_factor)
-                        # graph.add(imu_factor)
-
-                        initial.insert(X(depth_idx+1), state.pose())
-                        initial.insert(V(depth_idx+1), state.velocity())
-
-                        depth_idx += 1
-                        # print(f'\tMeasured depth: {depth}')
-                        # print()
-                    imu_time = self.imu_times[imu_idx]
-                    depth_time = self.depth_times[depth_idx]
-                    if imu_time < depth_time:
-                        sensor_time = imu_time * 1e-18
-                        sensor_type = 'imu'
-                    else:
-                        sensor_time = depth_time * 1e-18
-                        sensor_type = 'depth'
-
+                
             state_idx += 1
-        graph.saveGraph('incremental.dot', initial)
+        graph.saveGraph("incremental.dot", initial)
+
 
 def main():
     AUV_SLAM = AUViSAM()
     AUV_SLAM.iSAM()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -75,25 +75,28 @@ def read_imu(filename):
     imu_df = pd.read_csv(file_path)
 
     imu_time = imu_df['%time'].values.astype(np.float64)
-    imu_qx = imu_df['field.orientation.x'].values.astype(np.float64)
-    imu_qy = imu_df['field.orientation.y'].values.astype(np.float64)
-    imu_qz = imu_df['field.orientation.z'].values.astype(np.float64)
-    imu_qw = imu_df['field.orientation.w'].values.astype(np.float64)
-    lin_acc_x = imu_df['field.linear_acceleration.x'].values.astype(
+    imu_qx = imu_df['field.qx'].values.astype(np.float64)
+    imu_qy = imu_df['field.qy'].values.astype(np.float64)
+    imu_qz = imu_df['field.qz'].values.astype(np.float64)
+    imu_qw = imu_df['field.qw'].values.astype(np.float64)
+    lin_acc_x = imu_df['field.ax'].values.astype(
         np.float64)
-    lin_acc_y = imu_df['field.linear_acceleration.y'].values.astype(
+    lin_acc_y = imu_df['field.ay'].values.astype(
         np.float64)
-    lin_acc_z = imu_df['field.linear_acceleration.z'].values.astype(
+    lin_acc_z = imu_df['field.az'].values.astype(
         np.float64)
-    ang_vel_x = imu_df['field.angular_velocity.x'].values.astype(
+    ang_vel_x = imu_df['field.gx'].values.astype(
         np.float64)
-    ang_vel_y = imu_df['field.angular_velocity.y'].values.astype(
+    ang_vel_y = imu_df['field.gy'].values.astype(
         np.float64)
-    ang_vel_z = imu_df['field.angular_velocity.z'].values.astype(
+    ang_vel_z = imu_df['field.gz'].values.astype(
         np.float64)
-
-    imu = np.vstack((imu_time, imu_qx, imu_qy, imu_qz, imu_qw, lin_acc_x,
-                    lin_acc_y, lin_acc_z, ang_vel_x, ang_vel_y, ang_vel_z))
+    bias_x = imu_df['field.bx'].values.astype(
+        np.float64)
+    bias_y = imu_df['field.by'].values.astype(
+        np.float64)
+    bias_z = imu_df['field.bz'].values.astype(
+        np.float64)
 
     imu = {
         'qx': imu_qx,
@@ -105,7 +108,10 @@ def read_imu(filename):
         'az': lin_acc_z,
         'omega_x': ang_vel_x,
         'omega_y': ang_vel_y,
-        'omega_z': ang_vel_z
+        'omega_z': ang_vel_z,
+        'bx': bias_x,
+        'by': bias_y,
+        'bz': bias_z
     }
 
     return imu_time, imu

@@ -328,17 +328,27 @@ class AUVGraphSLAM:
         Calculate the error betwen the velocity prediction and the velocity measurement
         """
         key = this.keys()[0]
-        estimate = values.atPoint3(key)
-        vx = estimate[0]
-        vy = estimate[1]
-        vz = estimate[2]
+        vel_estimate = values.atPoint3(V(key))
+        pose_estimate = values.atPose3(X(key))
+
+        rot_mat = pose_estimate.rotation().matrix()
+        vx = vel_estimate[0]
+        vy = vel_estimate[1]
+        vz = vel_estimate[2]
+        v = np.array([vx, vy, vz]).reshape((3, 1))
+
+        meas_t = measurement.T
+        meas_world = rot_mat @ meas_t
+
         error = np.array(
-            [measurement[0, 0] - vx, measurement[0, 1] - vy, measurement[0, 2] - vz]
+            [
+                meas_world[0, 0] - v[0, 0],
+                meas_world[1, 0] - v[1, 0],
+                meas_world[2, 0] - v[2, 0],
+            ]
         )
         if jacobians is not None:
-            val = np.eye(3)
-            # val[:, -3:] = np.eye(3)
-            jacobians[0] = val
+            jacobians[0] = rot_mat
         return error
 
     #####################################################################
@@ -371,7 +381,7 @@ class AUVGraphSLAM:
         time_elapsed = 0
         total_time_elapsed = 0
 
-        while state_idx < 20:#state_step:
+        while state_idx < state_step:
             # Get the state
             # store as NavState or Pose3?
             # For now using NavState in order to use the imuPreintegrator
@@ -487,7 +497,7 @@ class AUVGraphSLAM:
                     # f'Below threshold for dvl at time: {total_time_elapsed}!')
                     dvl_factor = gtsam.CustomFactor(
                         self.dvl_model,
-                        [V(node_idx)],
+                        [node_idx],
                         partial(self.velocity_error, np.array([dvl_measurement])),
                     )
                     self.graph.add(dvl_factor)

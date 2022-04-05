@@ -172,6 +172,8 @@ class ImuFactorExample(PreintegrationExample):
         
         self.add_prior(num_poses - 1, graph)
 
+        graph.saveGraph('graph.dot', initial)
+
 
 def main():
     imu = ImuFactorExample(twist_scenario='forward_twist')

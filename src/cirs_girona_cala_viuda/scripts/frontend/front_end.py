@@ -282,7 +282,7 @@ class AUVGraphSLAM:
         r1 = R.from_rotvec([phi, 0, 0])
         r2 = R.from_rotvec([0, theta, 0])
         r3 = R.from_rotvec([0, 0, psi])
-        rot_mat = r1.as_matrix() @ r2.as_matrix() @ r3.as_matrix()
+        rot_mat = r3.as_matrix() @ r2.as_matrix() @ r1.as_matrix()
 
         p = gtsam.Point3(x, y, z)
         v = gtsam.Point3(u, v, r)
@@ -398,6 +398,7 @@ class AUVGraphSLAM:
                         V(node_idx), state.velocity(), self.velNoise
                     )
                 )
+                print(f'pose: {state.pose()}')
                 self.initial.insert(X(node_idx), state.pose())
                 self.initial.insert(V(node_idx), state.velocity())
                 node_idx += 1
@@ -691,3 +692,5 @@ if __name__ == "__main__":
     # GraphSLAM.plot_depth_values()
     GraphSLAM.optimize()
     GraphSLAM.plot_trajectories()
+    res_pose = GraphSLAM.result.atPose3(X(0))
+    print(f'Final pose: {res_pose}')

@@ -1,3 +1,9 @@
+Initializing...
+Initialization complete
+Optimizing...
+Optimization complete
+Initial error: 100507.97816656706
+Final error: 3410.766237587382
 Our Cone Pass Differences:
 
 0 2.1663887979138656

@@ -3,13 +3,17 @@ import os
 import sys
 
 import gtsam
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+from localization_metrics import *
 import numpy as np
 import pandas as pd
 from gtsam import NavState, Pose3, Rot3
 from gtsam.symbol_shorthand import B, V, X
 from typing import Optional, List
 import csv
+from constants import iekf_cones, slam_cones
 
 from scipy.spatial.transform import Rotation as R
 
@@ -381,6 +385,9 @@ class AUVGraphSLAM:
         time_elapsed = 0
         total_time_elapsed = 0
 
+        # record time for each node
+        time_pred = []
+
         while state_idx < state_step:
             # Get the state
             # store as NavState or Pose3?
@@ -400,6 +407,7 @@ class AUVGraphSLAM:
                 )
                 self.initial.insert(X(node_idx), state.pose())
                 self.initial.insert(V(node_idx), state.velocity())
+                time_pred.append(self.state_times[state_idx])
                 node_idx += 1
 
             dt = self.state_times[state_idx] - self.state_times[state_idx - 1]
@@ -511,11 +519,14 @@ class AUVGraphSLAM:
 
                 self.initial.insert(X(node_idx), state.pose())
                 self.initial.insert(V(node_idx), state.velocity())
+                time_pred.append(self.state_times[state_idx])
 
                 time_elapsed = 0
                 node_idx += 1
 
             state_idx += 1
+        
+        self.time_pred = np.array(time_pred) * 1e-9
 
         self.graph.saveGraph(f"{sys.path[0]}/graph.dot", self.initial)
 
@@ -606,6 +617,19 @@ class AUVGraphSLAM:
 
                 j += 1
 
+        metrics_us = cone_metrics(res_poses[:, :3], self.time_pred)
+        # metrics_gt = cone_metrics(all_X_gt[:, :3], all_time_gt)
+        # metrics_slam = cone_metrics(slam, slam_times)
+
+        print('Our Cone Pass Differences:\n')
+        for cone in range(6):
+            print(cone, metrics_us['%s_2pass_2norm' % str(cone)])
+
+        print('\nOur Distances Between Cones:\n')
+        for key in metrics_us.keys():
+            if 'dist' in key:
+                print(key, metrics_us[key])
+
         fig = plt.figure()
         ax = fig.add_subplot(111, projection="3d")
         ax.plot(init_poses[:, 0], init_poses[:, 1], init_poses[:, 2], label="Initial")
@@ -620,6 +644,39 @@ class AUVGraphSLAM:
             self.asekf_slam[:, 2],
             label="ASEKF",
         )
+
+        # # plot cones
+
+        cone_colors = {0: 'm', 1: 'y', 2: 'b', 3: 'g', 4: 'r', 5: 'c' }
+        n_cones = cone_times.shape[0]
+        for i in range(n_cones):
+        #     for s in range(len(series_names)):
+        #         # cone_time0 = cone_times_flat[i]
+        #         cone_time0 = cone_times[i, 0]
+        #         cone_time1 = cone_times[i, 1]
+
+        #         # Get belief position on first pass
+        #         x0 = x[s][np.argmin(np.abs(state_times[s] - cone_time0))]
+        #         y0 = y[s][np.argmin(np.abs(state_times[s] - cone_time0))]
+        #         z0 = z[s][np.argmin(np.abs(state_times[s] - cone_time0))]
+
+        #         # And belief position on second pass
+        #         x1 = x[s][np.argmin(np.abs(state_times[s] - cone_time1))]
+        #         y1 = y[s][np.argmin(np.abs(state_times[s] - cone_time1))]
+        #         z1 = z[s][np.argmin(np.abs(state_times[s] - cone_time1))]
+
+        #         # ax.scatter([x0], [y0], zs=[z0], c=[cone_colors[s]], marker='^')
+                xyz0 = metrics_us[f'cone_{i}_0']
+                xyz1 = metrics_us[f'cone_{i}_1']
+                x0, y0, z0 = xyz0[0], xyz0[1], xyz0[2]
+                x1, y1, z1 = xyz1[0], xyz1[1], xyz1[2]
+                ax.scatter([x0], [y0], zs=[z0], c=[cone_colors[i]], marker='^')
+                ax.scatter([x1], [y1], zs=[z1], c=[cone_colors[i]], marker='^')
+                ax.scatter([iekf_cones[i,0,0]], [iekf_cones[i,0,1]], zs=[iekf_cones[i,0,2]], c=[cone_colors[i]], marker='o')
+                ax.scatter([iekf_cones[i,1,0]], [iekf_cones[i,1,1]], zs=[iekf_cones[i,1,2]], c=[cone_colors[i]], marker='o')
+                ax.scatter([slam_cones[i,0,0]], [slam_cones[i,0,1]], zs=[slam_cones[i,0,2]], c=[cone_colors[i]], marker='x')
+                ax.scatter([slam_cones[i,1,0]], [slam_cones[i,1,1]], zs=[slam_cones[i,1,2]], c=[cone_colors[i]], marker='x')
+                
         # ax.plot(self.odom[0, :], self.odom[1, :],
         #         self.odom[2, :], label='Odometry')
         ax.set_xlabel("X (m)")

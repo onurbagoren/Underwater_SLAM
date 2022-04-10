@@ -59,6 +59,8 @@ def cone_metrics(pos, times):
         return_metrics['%s_2pass_abs_error' % str(i)] = np.abs(pred_xyz0 - pred_xyz1)
         return_metrics['%s_2pass_error^2' % str(i)] = (pred_xyz0 - pred_xyz1) ** 2
         return_metrics['%s_2pass_2norm' % str(i)] = np.linalg.norm(pred_xyz0 - pred_xyz1, ord=2)
+        return_metrics[f'cone_{i}_0'] = pred_xyz0
+        return_metrics[f'cone_{i}_1'] = pred_xyz1
 
     for step, i in enumerate(cone_path[:-1]):
         j = cone_path[step+1]
@@ -106,4 +108,3 @@ def cone_metrics(pos, times):
         return_metrics['%s_%s_dist' % (str(i), str(j))] = pred_dist
 
     return return_metrics
-      

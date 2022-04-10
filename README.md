@@ -9,12 +9,6 @@ The presentation for this work can be found on this YouTube video: https://youtu
 ```
 git clone git@github.com:onurbagoren/UW_SLAM.git
 ```
-- Run the following commands to compile the ROS packages that will help visualize the robot in RViz (DISCLAIMER: The visualization scripts were provided by the original dataset, which can be found at: https://cirs.udg.edu/caves-dataset/):
-```
-cd UW_SLAM
-catkin_make
-source devel/setup.bash
-```
 
 ### Required Packages
 The Required packages are as follows:
@@ -33,6 +27,14 @@ These can be installed by running the following command: `pip install -r require
 ```
 cd scripts/front_end
 python3 front_end.py
+```
+
+- Run the following commands to compile the ROS packages that will help visualize the robot in RViz 
+    - (DISCLAIMER: The visualization scripts were provided by the original dataset. This is not part of the project, but more of a visualization for the viewers. The dataset and scripts can be found at: https://cirs.udg.edu/caves-dataset/):
+```
+cd UW_SLAM
+catkin_make
+source devel/setup.bash
 ```
 
 ## Result

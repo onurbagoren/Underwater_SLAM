@@ -6,7 +6,8 @@ The presentation for this work can be found on this YouTube video: https://youtu
 ## Installations
 ### Cloning this directory
 - This directory can be treated as the `catkin_ws` directory that are explained in most ROS tutorials. Simply run the following command in a directory that is not the `catkin_ws` directory:
-```git clone git@github.com:onurbagoren/UW_SLAM.git
+```
+git clone git@github.com:onurbagoren/UW_SLAM.git
 ```
 - Run the following commands to compile the ROS packages that will help visualize the robot in RViz (DISCLAIMER: The visualization scripts were provided by the original dataset, which can be found at: https://cirs.udg.edu/caves-dataset/):
 ```

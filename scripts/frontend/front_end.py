@@ -532,7 +532,7 @@ class AUVGraphSLAM:
 
         self.time_pred = np.array(time_pred) * 1e-9
 
-        self.graph.saveGraph(f"{sys.path[0]}/graph.dot", self.initial)
+        self.graph.saveGraph(f"{sys.path[0]}/../graph_visualization/graph.dot", self.initial)
 
         print("Initialization complete")
         self.node_times = np.array(times)

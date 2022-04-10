@@ -1,6 +1,6 @@
 devel/
-src/cirs_girona_cala_viuda/data/
 build/
 src/CMakeLists.txt
 .vscode
 .catkin_workspace
+scripts/__pycache__/

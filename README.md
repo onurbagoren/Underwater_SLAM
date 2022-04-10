@@ -1,4 +1,6 @@
 # UW_SLAM
+This is a final research project for NA 568/EECS 568/ROB 530 MOBILE ROBOTICS: METHODS & ALGORITHMS WINTER 2022 at the University of Michigan. The goal of this project is to utilize Graph Based SLAM for the dataset of an autonomous underwater vehicle navigating system in underwater cave. We have formulated the Graph SLAM problem using the GTSAM library with sensor measurements of DVL, depth and IMU as factors. Additionally, 6 traffic cones were used as ground truth to validate our results against the existing trajectory optimization methods.
+
 ## Setting up ROS
 - If you have Ubuntu 20.04 or Debian Buster, you can install ROS by following the link:
 http://wiki.ros.org/noetic/Installation/
@@ -34,7 +36,7 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
     - https://link.springer.com/content/pdf/10.1007/s10514-013-9345-0.pdf
     - https://journals.sagepub.com/doi/pdf/10.1177/0278364917732838
     - https://onlinelibrary.wiley.com/doi/epdf/10.1002/rob.21640
-    - https://ieeexplore.ieee.org/document/9444664
+    - https://github.com/sansaldo/IEKF_AUV_Cave_Navigation
     
 ## Plotting Sonar data
 Keep in mind that this visualization is of a 360 degree scan, which takes ~5-20 seconds to complete, per the spec sheet of the sonar on the robot.
@@ -43,3 +45,6 @@ cd src/circ_girona_cala_viuda/scripts
 python3 visualize_sonar.py
 ```
 ![](images/sonar_viz.png)
+
+## Result
+

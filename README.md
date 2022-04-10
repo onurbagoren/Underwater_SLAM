@@ -72,7 +72,7 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
 - The original dataset can be found from: https://cirs.udg.edu/caves-dataset/
 
 ## Acknowledgement
-Professor Maani Ghaffari and the instruction team of ROB 530 in winter 2022, whose code examples helped form the basis of this project.
+Professor Maani Ghaffari and the instruction team of ROB 530 in Winter 2022.
 
 
 

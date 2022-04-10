@@ -34,6 +34,7 @@ roslaunch cirs_girona_cala_ciuda play_data.launch
     - https://link.springer.com/content/pdf/10.1007/s10514-013-9345-0.pdf
     - https://journals.sagepub.com/doi/pdf/10.1177/0278364917732838
     - https://onlinelibrary.wiley.com/doi/epdf/10.1002/rob.21640
+    - https://github.com/sansaldo/IEKF_AUV_Cave_Navigation
     
 ## Plotting Sonar data
 Keep in mind that this visualization is of a 360 degree scan, which takes ~5-20 seconds to complete, per the spec sheet of the sonar on the robot.

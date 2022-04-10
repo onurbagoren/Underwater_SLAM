@@ -1,4 +1,6 @@
 # UW_SLAM
+This is a final research project for NA 568/EECS 568/ROB 530 MOBILE ROBOTICS: METHODS & ALGORITHMS WINTER 2022 at the University of Michigan. The goal of this project is to utilize Graph Based SLAM for the dataset of an autonomous underwater vehicle navigating system of underwater cave. We have formulated the Graph SLAM problem using the GTSAM library with sensor measurements of DVL, depth and IMU as factors. Additionally, 6 traffic cones were used as ground truth to validate our results against the existing trajectory optimization methods.
+
 ## Setting up ROS
 - If you have Ubuntu 20.04 or Debian Buster, you can install ROS by following the link:
 http://wiki.ros.org/noetic/Installation/

@@ -3,6 +3,13 @@ This is a final research project for NA 568/EECS 568/ROB 530 MOBILE ROBOTICS: ME
 
 The presentation for this work can be found on this YouTube video: https://youtu.be/MtZ0FqfiBDI
 
+#### Group Members:
+- Onur Bagoren: https://github.com/onurbagoren
+- Rastri Dey: https://github.com/rastri-dey
+- Zhen Zhong: https://github.com/Tigerzhong212
+- Zihan Zhou: https://github.com/baobaotang0
+- Zhongru Liang: https://github.com/2034492239
+
 ## Installations
 ### Cloning this directory
 - This directory can be treated as the `catkin_ws` directory that are explained in most ROS tutorials. Simply run the following command in a directory that is not the `catkin_ws` directory:

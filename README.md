@@ -45,3 +45,6 @@ cd src/circ_girona_cala_viuda/scripts
 python3 visualize_sonar.py
 ```
 ![](images/sonar_viz.png)
+
+## Result
+

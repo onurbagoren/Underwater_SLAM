@@ -144,3 +144,22 @@ def read_camera_times(filename):
     times = times_df['times'].values.astype(np.float64)
 
     return times
+
+
+def read_dvl(filename):
+    """
+    Read the state of the dvl sensor in relation to the Earth
+    """
+    file_path = os.path.join(DATA_DIR, filename)
+
+    dvl_df = pd.read_csv(file_path)
+
+    dvl_time = dvl_df["%time"].values.astype(np.float64)
+    vx = dvl_df["field.velocityEarth0"].values.astype(np.float64)
+    vy = dvl_df["field.velocityEarth1"].values.astype(np.float64)
+    vz = dvl_df["field.velocityEarth2"].values.astype(np.float64)
+
+    dvl = np.vstack((vx, vy, vz))
+    dvl_times = dvl_time
+
+    return dvl_times, dvl

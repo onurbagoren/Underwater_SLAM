@@ -7,7 +7,7 @@ from gtsam.symbol_shorthand import B, V, X
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.spatial.transform import Rotation as R
 from typing import Optional, List
-
+from gtsam.utils import plot
 from dataloader import *
 
 
@@ -44,6 +44,8 @@ class AUViSAM:
         self.depth_times, self.depth = read_depth_sensor(
             "full_dataset/depth_sensor.csv"
         )
+        self.vel_times, self.vel = read_dvl("full_dataset/dvl_linkquest.csv")
+
 
     # Setters
 
@@ -196,7 +198,10 @@ class AUViSAM:
         """
 
         # Initialize a bunch of things
-        isam = gtsam.ISAM2()
+        isam_params = gtsam.ISAM2Params()
+        isam_params.relinearizeSkip = 10
+        isam_params.setFactorization("qr")
+        isam = gtsam.ISAM2(isam_params)
         graph = gtsam.NonlinearFactorGraph()
         initial = gtsam.Values()
 
@@ -216,7 +221,7 @@ class AUViSAM:
         state_step = self.iekf_times.shape[0]
         initial_time = self.iekf_times[0]
 
-        while state_idx < state_step:
+        while state_idx < 500:#state_step:
             state = self.get_nav_state(state_idx)
             state_time = self.iekf_times[state_idx] * 1e-18  # Convert to seconds
 
@@ -276,7 +281,13 @@ class AUViSAM:
                         self.pim.integrateMeasurement(
                             measuredOmega, measuredAcc, imu_dt
                         )
-                        print(f'IMU: {self.pim}')
+                        # print(f'Time: {total_time_elapsed}')
+                        # print(f'measuredOmega: {measuredOmega.T}')
+                        # print(f'measuredAcc: {measuredAcc.T}')
+                        # print(f'IMU: {imu_time}')
+                        # print(f'IMU dt: {imu_dt}')
+                        # print(self.pim)
+                        # input("Press Enter to continue...")
                     imu_idx += 1
                     imu_time = self.imu_times[imu_idx] * 1e-18
 
@@ -291,7 +302,13 @@ class AUViSAM:
                 total_time_elapsed += self.dt
 
             # Check how long its been
-            if time_elapsed > 0.5:
+            if time_elapsed > 0.50:
+                bias_idx += 1
+                
+
+                initial.insert(B(bias_idx), initial_bias)
+                initial.insert(X(node_idx), state.pose())
+                initial.insert(V(node_idx), state.velocity())
                 print(f"####### New factors at time {total_time_elapsed} #######")
                 imu_factor = gtsam.ImuFactor(
                     X(node_idx - 1),
@@ -302,17 +319,29 @@ class AUViSAM:
                     self.pim,
                 )
                 graph.add(imu_factor)
+                # print()
+                # print(f'IMU FACTOR:\n\t {imu_factor}')
+                # input("Press Enter to continue...")
+                # print(f'Added IMU factor at time {total_time_elapsed}')
+                # print(f'imu factor: {imu_factor}')
 
-                bias_idx += 1
+                bx = self.imu["bx"][imu_idx]
+                by = self.imu["by"][imu_idx]
+                bz = self.imu["bz"][imu_idx]
+
+                acc_bias = np.array([bx, by, bz])
+                gyro_bias = np.array([bx, by, bz])
+                initial_bias = gtsam.imuBias.ConstantBias(acc_bias, gyro_bias)
+
                 bias_factor = gtsam.BetweenFactorConstantBias(
                     B(bias_idx - 1),
                     B(bias_idx),
-                    gtsam.imuBias.ConstantBias(),
+                    initial_bias,
                     self.bias_cov,
                 )
                 graph.add(bias_factor)
 
-                depth_time = (self.depth_times - initial_time) * 1e-9
+                depth_time = (self.depth_times[1:] - initial_time) * 1e-9
                 depth_idx = np.argmin(np.abs(depth_time - total_time_elapsed))
                 depth_time = depth_time[depth_idx]
                 # print(depth_time, total_time_elapsed)
@@ -323,8 +352,8 @@ class AUViSAM:
                 # print(depth_diff)
 
                 if depth_diff < 1e-2:
-                    # print(
-                    # f'Below threshold for depth at time: {total_time_elapsed}!')
+                    print(
+                    f'Below threshold for depth at time: {total_time_elapsed}!')
                     depth_factor = gtsam.CustomFactor(
                         self.depth_model,
                         [X(node_idx)],
@@ -332,20 +361,41 @@ class AUViSAM:
                     )
                     graph.add(depth_factor)
 
-                initial.insert(B(bias_idx), gtsam.imuBias.ConstantBias())
-                initial.insert(X(node_idx), state.pose())
-                initial.insert(V(node_idx), state.velocity())
+                vel_time = (self.vel_times[1:] - initial_time) * 1e-9
+                vel_idx = np.argmin(np.abs(vel_time - total_time_elapsed))
+                vel_time = vel_time[vel_idx]
+                # print(depth_time, total_time_elapsed)
+                vel_measurement = self.vel[:, vel_idx]
+
+                # Compute difference between current time and depth time
+                vel_diff = abs(total_time_elapsed - vel_time)
+                # print(depth_diff)
+                # # print(node_idx)
+                # if vel_diff < 1e-2:
+                #     print(
+                #     f'Below threshold for depth at time: {total_time_elapsed}!')
+                #     vel_factor = gtsam.CustomFactor(
+                #         self.velNoise,
+                #         [node_idx],
+                #         partial(self.velocity_error, np.array([vel_measurement])),
+                #     )
+                #     graph.add(vel_factor)
+
+
 
                 self.pim.resetIntegration()
 
                 node_idx += 1
                 time_elapsed = 0
 
-            isam.update(graph, initial)
-            result = isam.calculateEstimate()
-            graph.saveGraph(f"{sys.path[0]}/graph.dot", result)
-            graph = gtsam.NonlinearFactorGraph()
-            initial.clear()
+                isam.update(graph, initial)
+                result = isam.calculateEstimate()
+                # print(result)
+                # plot.plot_incremental_trajectory(0, result,
+                #                                 start=0, scale=1, time_interval=0.01)
+                graph.saveGraph(f"{sys.path[0]}/graph.dot", result)
+                graph = gtsam.NonlinearFactorGraph()
+                initial.clear()
 
             state_idx += 1
         return result, node_idx

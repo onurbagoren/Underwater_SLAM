@@ -36,15 +36,16 @@ class AUVGraphSLAM:
         self.initial = gtsam.Values()
         self.initial.insert(BIAS_KEY, bias)
 
-        self.priorNoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
+        self.priorNoise = gtsam.noiseModel.Isotropic.Sigma(6, 0.001)
         self.velNoise = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
         self.depth_model = gtsam.noiseModel.Isotropic.Sigma(1, 0.1)
         self.dvl_model = gtsam.noiseModel.Isotropic.Sigma(3, 0.1)
-        self.odom_model = gtsam.noiseModel.Isotropic.Sigma(6, 0.1)
         self.dt = 1e-6
 
-        # Set time threshold to 10 ms
+        # Set time threshold to 100 ms
         self.time_threshold = 1e-4
+
+        self.read_comparison_slam("comparison/asekf_slam.csv")
 
         self.node_add = 1
 
@@ -313,7 +314,7 @@ class AUVGraphSLAM:
         error = measurement - depth
         if jacobians is not None:
             val = np.zeros((1, 6))
-            val[0, -1] = 1
+            val[0, 2] = 1
             jacobians[0] = val
         return error
 
@@ -378,6 +379,8 @@ class AUVGraphSLAM:
 
         initial_time = self.state_times[0]
 
+        times = []
+
         time_elapsed = 0
         total_time_elapsed = 0
 
@@ -398,9 +401,9 @@ class AUVGraphSLAM:
                         V(node_idx), state.velocity(), self.velNoise
                     )
                 )
-                print(f'pose: {state.pose()}')
                 self.initial.insert(X(node_idx), state.pose())
                 self.initial.insert(V(node_idx), state.velocity())
+                times.append(self.state_times[state_idx])
                 node_idx += 1
 
             dt = self.state_times[state_idx] - self.state_times[state_idx - 1]
@@ -516,11 +519,14 @@ class AUVGraphSLAM:
                 time_elapsed = 0
                 node_idx += 1
 
+                times.append(self.state_times[state_idx])
+
             state_idx += 1
 
         self.graph.saveGraph(f"{sys.path[0]}/graph.dot", self.initial)
 
         print("Initialization complete")
+        self.node_times = np.array(times)
 
     def optimize(self):
         print("Optimizing...")
@@ -529,7 +535,7 @@ class AUVGraphSLAM:
         params.setMaxIterations(1000)
         initial_error = self.graph.error(self.initial)
 
-        optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial)
+        optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial, params)
         # optimizer = gtsam.GaussNewtonOptimizer(self.graph, self.initial)
         self.result = optimizer.optimize()
         print("Optimization complete")
@@ -546,6 +552,65 @@ class AUVGraphSLAM:
         else:
             floating_mean = data[:, index]
         return floating_mean
+
+    def mse(self):
+        """
+        Compute the mse error on the pose of the robot between the SLAM traj
+        """
+        # Compute the error between the SLAM trajectory and the ground truth
+        # trajectory
+        init_error_x = 0
+        init_error_y = 0
+        init_error_z = 0
+        res_error_x = 0
+        res_error_y = 0
+        res_error_z = 0
+        init_error = 0
+        res_error = 0
+        for i in range(self.node_times.shape[0]):
+            # Find the closest time in the slam times
+            closest_idx = np.argmin(np.abs(self.slam_times * 1e9 - self.node_times[i]))
+            closest_time = self.slam_times[closest_idx] * 1e9
+
+            # Res pose
+            res_pose = self.result.atPose3(X(i))
+            res_x = res_pose.x()
+            res_y = res_pose.y()
+            res_z = res_pose.z()
+
+            # Initial pose
+            init_pose = self.initial.atPose3(X(i))
+            init_x = init_pose.x()
+            init_y = init_pose.y()
+            init_z = init_pose.z()
+
+            # Ground truth pose
+            gt_pose = self.asekf_slam[closest_idx]
+            gt_x = gt_pose[0]
+            gt_y = gt_pose[1]
+            gt_z = gt_pose[2]
+
+            # Compute the MSE
+            init_error_x += (init_x - gt_x) ** 2
+            init_error_y += (init_y - gt_y) ** 2
+            init_error_z += (init_z - gt_z) ** 2
+            res_error_x += (res_x - gt_x) ** 2
+            res_error_y += (res_y - gt_y) ** 2
+            res_error_z += (res_z - gt_z) ** 2
+
+            # Compute the total error
+            init_error += (
+                (init_x - gt_x) ** 2 + (init_y - gt_y) ** 2 + (init_z - gt_z) ** 2
+            )
+            res_error += (res_x - gt_x) ** 2 + (res_y - gt_y) ** 2 + (res_z - gt_z) ** 2
+
+        print(f"Type:\tX\tY\tZ\tTotal:")
+        print(
+            f"Init:\t{init_error_x/self.node_times.shape[0]:.2f}\t{init_error_y/self.node_times.shape[0]:.2f}\t{init_error_z/self.node_times.shape[0]:.2f}\t{init_error/self.node_times.shape[0]:.2f}"
+        )
+        print(
+            f"Result:\t{res_error_x/self.node_times.shape[0]:.2f}\t{res_error_y/self.node_times.shape[0]:.2f}\t{res_error_z/self.node_times.shape[0]:.2f}\t{res_error/self.node_times.shape[0]:.2f}"
+        )
 
     def plot_depth_values(self):
         depth_values = self.depth
@@ -573,9 +638,6 @@ class AUVGraphSLAM:
         """
         Compare the trajectories
         """
-
-        self.read_comparison_slam("comparison/asekf_slam.csv")
-
         res_poses = np.zeros((self.initial.size() // 2, 6))
         init_poses = np.zeros((self.initial.size() // 2, 6))
         j = 0
@@ -682,15 +744,13 @@ class AUVGraphSLAM:
         axs[2, 1].set_xlabel("Time")
         axs[2, 1].set_ylabel("Yaw (rad)")
         axs[2, 1].legend()
-        plt.savefig(f"{sys.path[0]}/../images/all_sensors/marginals.png")
+        plt.savefig(f"{sys.path[0]}/../images/all_sensors/marginals_.png")
         plt.show()
 
 
 if __name__ == "__main__":
     GraphSLAM = AUVGraphSLAM()
     GraphSLAM.initialize()
-    # GraphSLAM.plot_depth_values()
     GraphSLAM.optimize()
     GraphSLAM.plot_trajectories()
-    res_pose = GraphSLAM.result.atPose3(X(0))
-    print(f'Final pose: {res_pose}')
+    GraphSLAM.mse()

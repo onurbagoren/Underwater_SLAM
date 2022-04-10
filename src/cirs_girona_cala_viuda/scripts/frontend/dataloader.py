@@ -75,28 +75,25 @@ def read_imu(filename):
     imu_df = pd.read_csv(file_path)
 
     imu_time = imu_df['%time'].values.astype(np.float64)
-    imu_qx = imu_df['field.qx'].values.astype(np.float64)
-    imu_qy = imu_df['field.qy'].values.astype(np.float64)
-    imu_qz = imu_df['field.qz'].values.astype(np.float64)
-    imu_qw = imu_df['field.qw'].values.astype(np.float64)
-    lin_acc_x = imu_df['field.ax'].values.astype(
+    imu_qx = imu_df['field.orientation.x'].values.astype(np.float64)
+    imu_qy = imu_df['field.orientation.y'].values.astype(np.float64)
+    imu_qz = imu_df['field.orientation.z'].values.astype(np.float64)
+    imu_qw = imu_df['field.orientation.w'].values.astype(np.float64)
+    lin_acc_x = imu_df['field.linear_acceleration.x'].values.astype(
         np.float64)
-    lin_acc_y = imu_df['field.ay'].values.astype(
+    lin_acc_y = imu_df['field.linear_acceleration.y'].values.astype(
         np.float64)
-    lin_acc_z = imu_df['field.az'].values.astype(
+    lin_acc_z = imu_df['field.linear_acceleration.z'].values.astype(
         np.float64)
-    ang_vel_x = imu_df['field.gx'].values.astype(
+    ang_vel_x = imu_df['field.angular_velocity.x'].values.astype(
         np.float64)
-    ang_vel_y = imu_df['field.gy'].values.astype(
+    ang_vel_y = imu_df['field.angular_velocity.y'].values.astype(
         np.float64)
-    ang_vel_z = imu_df['field.gz'].values.astype(
+    ang_vel_z = imu_df['field.angular_velocity.z'].values.astype(
         np.float64)
-    bias_x = imu_df['field.bx'].values.astype(
-        np.float64)
-    bias_y = imu_df['field.by'].values.astype(
-        np.float64)
-    bias_z = imu_df['field.bz'].values.astype(
-        np.float64)
+
+    imu = np.vstack((imu_time, imu_qx, imu_qy, imu_qz, imu_qw, lin_acc_x,
+                    lin_acc_y, lin_acc_z, ang_vel_x, ang_vel_y, ang_vel_z))
 
     imu = {
         'qx': imu_qx,
@@ -108,10 +105,7 @@ def read_imu(filename):
         'az': lin_acc_z,
         'omega_x': ang_vel_x,
         'omega_y': ang_vel_y,
-        'omega_z': ang_vel_z,
-        'bx': bias_x,
-        'by': bias_y,
-        'bz': bias_z
+        'omega_z': ang_vel_z
     }
 
     return imu_time, imu
@@ -144,3 +138,22 @@ def read_camera_times(filename):
     times = times_df['times'].values.astype(np.float64)
 
     return times
+
+
+def read_dvl(filename):
+    """
+    Read the state of the dvl sensor in relation to the Earth
+    """
+    file_path = os.path.join(DATA_DIR, filename)
+
+    dvl_df = pd.read_csv(file_path)
+
+    dvl_time = dvl_df["%time"].values.astype(np.float64)
+    vx = dvl_df["field.velocityEarth0"].values.astype(np.float64)
+    vy = dvl_df["field.velocityEarth1"].values.astype(np.float64)
+    vz = dvl_df["field.velocityEarth2"].values.astype(np.float64)
+
+    dvl = np.vstack((vx, vy, vz))
+    dvl_times = dvl_time
+
+    return dvl_times, dvl

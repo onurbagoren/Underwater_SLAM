@@ -50,7 +50,7 @@ cone_distances = {(0,1): 19.,
                   (0,5): 30.,
                   (5,0): 30.}
 
-# predicted position of cones by other approaches (num_cones, num_passes, dim)
+# plot cones (other approaches)
 
 iekf_cones = np.array(
     [[[ -2.43949028,   0.96523546, -12.89149096],

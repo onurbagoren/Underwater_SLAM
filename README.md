@@ -10,6 +10,8 @@ The presentation for this work can be found on this YouTube video: https://youtu
 - Zihan Zhou: https://github.com/baobaotang0
 - Zhongru Liang: https://github.com/2034492239
 
+**Although the contributors appear as two people, all members contributed to the code.**
+
 ## Installations
 ### Cloning this directory
 - This directory can be treated as the `catkin_ws` directory that are explained in most ROS tutorials. Simply run the following command in a directory that is not the `catkin_ws` directory:
